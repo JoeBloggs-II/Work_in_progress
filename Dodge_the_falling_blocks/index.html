@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Smooth Player Dodge Game with Dash & Particles</title>
+<title>Dodge Game with Effects</title>
 <style>
   body {
     margin: 0;
@@ -58,7 +58,7 @@ function createObstacle() {
   const width = Math.random() * 60 + 20;
   const x = Math.random() * (canvas.width - width);
   const speed = Math.random() * 2 + 2;
-  obstacles.push({ x, y: -20, width, height: 20, speed });
+  obstacles.push({ x, y: -20, width, height: 20, speed, dodged: false });
 }
 
 function createDashParticles() {
@@ -74,19 +74,35 @@ function createDashParticles() {
   }
 }
 
+function createDodgeParticles(x, y, color='#0ff') {
+  for (let i = 0; i < 6; i++) {
+    particles.push({
+      x: x,
+      y: y,
+      vx: (Math.random() - 0.5) * 3,
+      vy: (Math.random() - 0.5) * 3,
+      alpha: 1,
+      size: Math.random() * 3 + 2,
+      color: color
+    });
+  }
+}
+
 function drawPlayer() {
   ctx.fillStyle = '#0f0';
   ctx.fillRect(player.x, player.y, player.width, player.height);
 }
 
 function drawObstacles() {
-  ctx.fillStyle = '#f00';
-  obstacles.forEach(obs => ctx.fillRect(obs.x, obs.y, obs.width, obs.height));
+  obstacles.forEach(obs => {
+    ctx.fillStyle = `rgb(${200+Math.random()*55},0,0)`; // slight color variation
+    ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+  });
 }
 
 function drawParticles() {
   particles.forEach(p => {
-    ctx.fillStyle = `rgba(255,255,0,${p.alpha})`;
+    ctx.fillStyle = p.color ? `rgba(${p.color},${p.alpha})` : `rgba(255,255,0,${p.alpha})`;
     ctx.fillRect(p.x, p.y, p.size, p.size);
   });
 }
@@ -101,7 +117,13 @@ function updateParticles(delta) {
 }
 
 function updateObstacles(delta) {
-  obstacles.forEach(obs => obs.y += obs.speed * delta);
+  obstacles.forEach(obs => {
+    obs.y += obs.speed * delta;
+    if (!obs.dodged && obs.y > player.y + player.height) {
+      obs.dodged = true;
+      createDodgeParticles(obs.x + obs.width/2, obs.y, '0,255,255'); // cyan burst
+    }
+  });
   obstacles = obstacles.filter(obs => obs.y < canvas.height + obs.height);
 }
 
@@ -117,7 +139,7 @@ function checkCollision() {
 }
 
 function updateScore(delta) {
-  score += delta * 0.016; // increment score based on real time
+  score += delta * 0.016; 
   document.getElementById('score').textContent = 'Score: ' + Math.floor(score);
 }
 
@@ -125,24 +147,22 @@ function updatePlayer() {
   if (keys.left) player.vx -= player.speed;
   if (keys.right) player.vx += player.speed;
 
-  // dash mechanic
   if (keys.dash && player.canDash) {
     player.vx += player.dashPower * (keys.left ? -1 : keys.right ? 1 : 0);
     player.canDash = false;
     createDashParticles();
   }
 
-  player.vx *= player.friction; // smooth deceleration
+  player.vx *= player.friction;
   player.x += player.vx;
 
-  // constrain within canvas
   if (player.x < 0) { player.x = 0; player.vx = 0; }
   if (player.x > canvas.width - player.width) { player.x = canvas.width - player.width; player.vx = 0; }
 }
 
 function gameLoop(timestamp) {
   if (!lastTime) lastTime = timestamp;
-  const delta = (timestamp - lastTime) / 16.666; // relative to 60fps
+  const delta = (timestamp - lastTime) / 16.666; 
   lastTime = timestamp;
 
   if (gameOver) {
@@ -184,7 +204,7 @@ document.addEventListener('keyup', e => {
   if (e.key === 'ArrowRight') keys.right = false;
   if (e.key === 'Shift') { 
     keys.dash = false;
-    player.canDash = true; // reset dash on key release
+    player.canDash = true; 
   }
 });
 
