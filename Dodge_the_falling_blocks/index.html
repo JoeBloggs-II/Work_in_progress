@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Smooth Player Dodge Game</title>
+<title>Smooth Player Dodge Game with Dash</title>
 <style>
   body {
     margin: 0;
@@ -35,12 +35,22 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-const player = { x: 180, y: 550, width: 40, height: 40, vx: 0, speed: 0.5, friction: 0.85 };
+const player = {
+  x: 180,
+  y: 550,
+  width: 40,
+  height: 40,
+  vx: 0,
+  speed: 0.5,
+  friction: 0.85,
+  dashPower: 5,
+  canDash: true
+};
+
 let obstacles = [];
 let score = 0;
 let gameOver = false;
-
-let keys = { left: false, right: false };
+let keys = { left: false, right: false, dash: false };
 let lastTime = 0;
 
 function createObstacle() {
@@ -77,13 +87,19 @@ function checkCollision() {
 }
 
 function updateScore(delta) {
-  score += delta * 0.1;
+  score += delta * 0.1; // now a number
   document.getElementById('score').textContent = 'Score: ' + Math.floor(score);
 }
 
 function updatePlayer() {
   if (keys.left) player.vx -= player.speed;
   if (keys.right) player.vx += player.speed;
+
+  // dash mechanic
+  if (keys.dash && player.canDash) {
+    player.vx += player.dashPower * (keys.left ? -1 : keys.right ? 1 : 0);
+    player.canDash = false; // only once per key press
+  }
 
   player.vx *= player.friction; // smooth deceleration
   player.x += player.vx;
@@ -126,11 +142,16 @@ function gameLoop(timestamp) {
 document.addEventListener('keydown', e => {
   if (e.key === 'ArrowLeft') keys.left = true;
   if (e.key === 'ArrowRight') keys.right = true;
+  if (e.key === 'Shift') keys.dash = true;
 });
 
 document.addEventListener('keyup', e => {
   if (e.key === 'ArrowLeft') keys.left = false;
   if (e.key === 'ArrowRight') keys.right = false;
+  if (e.key === 'Shift') { 
+    keys.dash = false;
+    player.canDash = true; // reset dash on key release
+  }
 });
 
 gameLoop();
