@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dodge the Blocks!</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: #222;
+    font-family: sans-serif;
+    color: #fff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    user-select: none;
+  }
+  canvas {
+    background: #111;
+    border: 2px solid #fff;
+    display: block;
+  }
+  #score {
+    position: absolute;
+    top: 10px;
+    font-size: 20px;
+  }
+</style>
+</head>
+<body>
+<div id="score">Score: 0</div>
+<canvas id="gameCanvas" width="400" height="600"></canvas>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const player = { x: 180, y: 550, width: 40, height: 40, speed: 5 };
+let obstacles = [];
+let frames = 0;
+let score = 0;
+let gameOver = false;
+
+function createObstacle() {
+  const width = Math.random() * 60 + 20;
+  const x = Math.random() * (canvas.width - width);
+  obstacles.push({ x, y: -20, width, height: 20, speed: Math.random() * 2 + 2 });
+}
+
+function drawPlayer() {
+  ctx.fillStyle = '#0f0';
+  ctx.fillRect(player.x, player.y, player.width, player.height);
+}
+
+function drawObstacles() {
+  ctx.fillStyle = '#f00';
+  obstacles.forEach(obs => ctx.fillRect(obs.x, obs.y, obs.width, obs.height));
+}
+
+function updateObstacles() {
+  obstacles.forEach(obs => obs.y += obs.speed);
+  obstacles = obstacles.filter(obs => obs.y < canvas.height);
+}
+
+function checkCollision() {
+  for (let obs of obstacles) {
+    if (player.x < obs.x + obs.width &&
+        player.x + player.width > obs.x &&
+        player.y < obs.y + obs.height &&
+        player.y + player.height > obs.y) {
+      gameOver = true;
+    }
+  }
+}
+
+function updateScore() {
+  score++;
+  document.getElementById('score').textContent = 'Score: ' + score;
+}
+
+function gameLoop() {
+  if (gameOver) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = '30px sans-serif';
+    ctx.fillText('Game Over!', 110, 300);
+    ctx.font = '20px sans-serif';
+    ctx.fillText('Final Score: ' + score, 130, 340);
+    return;
+  }
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  frames++;
+  if (frames % 60 === 0) createObstacle();
+
+  drawPlayer();
+  drawObstacles();
+  updateObstacles();
+  checkCollision();
+  updateScore();
+
+  requestAnimationFrame(gameLoop);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft') player.x -= player.speed;
+  if (e.key === 'ArrowRight') player.x += player.speed;
+  player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
+});
+
+gameLoop();
+</script>
+</body>
+</html>
