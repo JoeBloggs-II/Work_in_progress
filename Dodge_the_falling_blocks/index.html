@@ -2,30 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Dodge Game with Effects</title>
+<title>Smooth Dodge Game with Particles</title>
 <style>
-  body {
-    margin: 0;
-    overflow: hidden;
-    background: #222;
-    font-family: sans-serif;
-    color: #fff;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
-    user-select: none;
-  }
-  canvas {
-    background: #111;
-    border: 2px solid #fff;
-    display: block;
-  }
-  #score {
-    position: absolute;
-    top: 10px;
-    font-size: 20px;
-  }
+  body { margin:0; overflow:hidden; background:#222; font-family:sans-serif; color:#fff; display:flex; justify-content:center; align-items:center; height:100vh; user-select:none; }
+  canvas { background:#111; border:2px solid #fff; display:block; }
+  #score { position:absolute; top:10px; font-size:20px; }
 </style>
 </head>
 <body>
@@ -35,55 +16,45 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-const player = {
-  x: 180,
-  y: 550,
-  width: 40,
-  height: 40,
-  vx: 0,
-  speed: 0.5,
-  friction: 0.85,
-  dashPower: 5,
-  canDash: true
-};
-
+const player = { x:180, y:550, width:40, height:40, vx:0, speed:0.5, friction:0.85, dashPower:6, canDash:true };
 let obstacles = [];
 let particles = [];
 let score = 0;
 let gameOver = false;
-let keys = { left: false, right: false, dash: false };
-let lastTime = null;
+let keys = { left:false, right:false, dash:false };
+let lastTime = 0;
 
 function createObstacle() {
-  const width = Math.random() * 60 + 20;
-  const x = Math.random() * (canvas.width - width);
-  const speed = Math.random() * 2 + 2;
-  obstacles.push({ x, y: -20, width, height: 20, speed, dodged: false });
+  const width = Math.random()*60+20;
+  const x = Math.random()*(canvas.width-width);
+  const speed = Math.random()*2+2;
+  obstacles.push({x, y:-20, width, height:20, speed, dodged:false});
 }
 
 function createDashParticles() {
-  for (let i = 0; i < 5; i++) {
+  for(let i=0;i<8;i++){
     particles.push({
-      x: player.x + player.width / 2,
-      y: player.y + player.height / 2,
-      vx: (Math.random() - 0.5) * 2,
-      vy: (Math.random() - 0.5) * 2,
-      alpha: 1,
-      size: Math.random() * 4 + 2
+      x:player.x + player.width/2,
+      y:player.y + player.height/2,
+      vx:(Math.random()-0.5)*4,
+      vy:(Math.random()-0.5)*4,
+      alpha:1,
+      size:Math.random()*4+2,
+      color:'255,255,0'
     });
   }
 }
 
-function createDodgeParticles(x, y, color='#0ff') {
-  for (let i = 0; i < 6; i++) {
+function createDodgeParticles(x,y) {
+  for(let i=0;i<6;i++){
     particles.push({
-      x: x,
-      y: y,
-      vx: (Math.random() - 0.5) * 3,
-      vy: (Math.random() - 0.5) * 3,
-      alpha: 1,
-      size: Math.random() * 3 + 2,
-      color: color
+      x:x,
+      y:y,
+      vx:(Math.random()-0.5)*3,
+      vy:(Math.random()-0.5)*3,
+      alpha:1,
+      size:Math.random()*3+2,
+      color:'0,255,255'
     });
   }
 }
@@ -94,61 +65,59 @@ function drawPlayer() {
 }
 
 function drawObstacles() {
-  obstacles.forEach(obs => {
-    ctx.fillStyle = `rgb(${200+Math.random()*55},0,0)`; // slight color variation
+  obstacles.forEach(obs=>{
+    ctx.fillStyle = `rgb(${200+Math.random()*55},0,0)`;
     ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
   });
 }
 
 function drawParticles() {
-  particles.forEach(p => {
-    ctx.fillStyle = p.color ? `rgba(${p.color},${p.alpha})` : `rgba(255,255,0,${p.alpha})`;
-    ctx.fillRect(p.x, p.y, p.size, p.size);
+  particles.forEach(p=>{
+    ctx.fillStyle = `rgba(${p.color},${p.alpha})`;
+    ctx.fillRect(p.x,p.y,p.size,p.size);
   });
 }
 
-function updateParticles(delta) {
-  particles.forEach(p => {
-    p.x += p.vx * delta;
-    p.y += p.vy * delta;
-    p.alpha -= 0.03 * delta;
+function updateParticles(delta){
+  particles.forEach(p=>{
+    p.x += p.vx*delta;
+    p.y += p.vy*delta;
+    p.alpha -= 0.04*delta;
   });
-  particles = particles.filter(p => p.alpha > 0);
+  particles = particles.filter(p=>p.alpha>0);
 }
 
-function updateObstacles(delta) {
-  obstacles.forEach(obs => {
-    obs.y += obs.speed * delta;
-    if (!obs.dodged && obs.y > player.y + player.height) {
+function updateObstacles(delta){
+  obstacles.forEach(obs=>{
+    obs.y += obs.speed*delta;
+    if(!obs.dodged && obs.y>player.y+player.height){
       obs.dodged = true;
-      createDodgeParticles(obs.x + obs.width/2, obs.y, '0,255,255'); // cyan burst
+      createDodgeParticles(obs.x+obs.width/2, obs.y+obs.height/2);
     }
   });
-  obstacles = obstacles.filter(obs => obs.y < canvas.height + obs.height);
+  obstacles = obstacles.filter(obs=>obs.y < canvas.height + obs.height);
 }
 
-function checkCollision() {
-  for (let obs of obstacles) {
-    if (player.x < obs.x + obs.width &&
-        player.x + player.width > obs.x &&
-        player.y < obs.y + obs.height &&
-        player.y + player.height > obs.y) {
+function checkCollision(){
+  for(let obs of obstacles){
+    if(player.x < obs.x+obs.width && player.x+player.width>obs.x &&
+       player.y < obs.y+obs.height && player.y+player.height>obs.y){
       gameOver = true;
     }
   }
 }
 
-function updateScore(delta) {
-  score += delta * 0.016; 
+function updateScore(delta){
+  score += delta * 0.016; // small increment per frame
   document.getElementById('score').textContent = 'Score: ' + Math.floor(score);
 }
 
-function updatePlayer() {
-  if (keys.left) player.vx -= player.speed;
-  if (keys.right) player.vx += player.speed;
+function updatePlayer(){
+  if(keys.left) player.vx -= player.speed;
+  if(keys.right) player.vx += player.speed;
 
-  if (keys.dash && player.canDash) {
-    player.vx += player.dashPower * (keys.left ? -1 : keys.right ? 1 : 0);
+  if(keys.dash && player.canDash){
+    player.vx += player.dashPower*(keys.left?-1:keys.right?1:0);
     player.canDash = false;
     createDashParticles();
   }
@@ -156,29 +125,29 @@ function updatePlayer() {
   player.vx *= player.friction;
   player.x += player.vx;
 
-  if (player.x < 0) { player.x = 0; player.vx = 0; }
-  if (player.x > canvas.width - player.width) { player.x = canvas.width - player.width; player.vx = 0; }
+  if(player.x<0){ player.x=0; player.vx=0; }
+  if(player.x>canvas.width-player.width){ player.x=canvas.width-player.width; player.vx=0; }
 }
 
-function gameLoop(timestamp) {
-  if (!lastTime) lastTime = timestamp;
-  const delta = (timestamp - lastTime) / 16.666; 
+function gameLoop(timestamp){
+  if(!lastTime) lastTime=timestamp;
+  const delta = (timestamp-lastTime)/16.666;
   lastTime = timestamp;
 
-  if (gameOver) {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.7)';
     ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.fillStyle = '#fff';
-    ctx.font = '30px sans-serif';
-    ctx.fillText('Game Over!', 110, 300);
-    ctx.font = '20px sans-serif';
-    ctx.fillText('Final Score: ' + Math.floor(score), 130, 340);
+    ctx.fillStyle='#fff';
+    ctx.font='30px sans-serif';
+    ctx.fillText('Game Over!',110,300);
+    ctx.font='20px sans-serif';
+    ctx.fillText('Final Score: '+Math.floor(score),130,340);
     return;
   }
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  if (Math.random() < 0.02) createObstacle();
+  if(Math.random()<0.02) createObstacle();
 
   updatePlayer();
   updateObstacles(delta);
@@ -193,19 +162,16 @@ function gameLoop(timestamp) {
   requestAnimationFrame(gameLoop);
 }
 
-document.addEventListener('keydown', e => {
-  if (e.key === 'ArrowLeft') keys.left = true;
-  if (e.key === 'ArrowRight') keys.right = true;
-  if (e.key === 'Shift') keys.dash = true;
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft') keys.left=true;
+  if(e.key==='ArrowRight') keys.right=true;
+  if(e.key==='Shift') keys.dash=true;
 });
 
-document.addEventListener('keyup', e => {
-  if (e.key === 'ArrowLeft') keys.left = false;
-  if (e.key === 'ArrowRight') keys.right = false;
-  if (e.key === 'Shift') { 
-    keys.dash = false;
-    player.canDash = true; 
-  }
+document.addEventListener('keyup',e=>{
+  if(e.key==='ArrowLeft') keys.left=false;
+  if(e.key==='ArrowRight') keys.right=false;
+  if(e.key==='Shift'){ keys.dash=false; player.canDash=true; }
 });
 
 gameLoop();
