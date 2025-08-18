@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Dodge the Blocks!</title>
+<title>Smoother Dodge the Blocks!</title>
 <style>
   body {
     margin: 0;
@@ -37,14 +37,16 @@ const ctx = canvas.getContext('2d');
 
 const player = { x: 180, y: 550, width: 40, height: 40, speed: 5 };
 let obstacles = [];
-let frames = 0;
 let score = 0;
 let gameOver = false;
+
+let lastTime = 0;
 
 function createObstacle() {
   const width = Math.random() * 60 + 20;
   const x = Math.random() * (canvas.width - width);
-  obstacles.push({ x, y: -20, width, height: 20, speed: Math.random() * 2 + 2 });
+  const speed = Math.random() * 2 + 2;
+  obstacles.push({ x, y: -20, width, height: 20, speed });
 }
 
 function drawPlayer() {
@@ -57,9 +59,11 @@ function drawObstacles() {
   obstacles.forEach(obs => ctx.fillRect(obs.x, obs.y, obs.width, obs.height));
 }
 
-function updateObstacles() {
-  obstacles.forEach(obs => obs.y += obs.speed);
-  obstacles = obstacles.filter(obs => obs.y < canvas.height);
+function updateObstacles(delta) {
+  obstacles.forEach(obs => {
+    obs.y += obs.speed * delta;
+  });
+  obstacles = obstacles.filter(obs => obs.y < canvas.height + obs.height);
 }
 
 function checkCollision() {
@@ -73,12 +77,16 @@ function checkCollision() {
   }
 }
 
-function updateScore() {
-  score++;
-  document.getElementById('score').textContent = 'Score: ' + score;
+function updateScore(delta) {
+  score += delta * 0.1; // smoother increment based on time
+  document.getElementById('score').textContent = 'Score: ' + Math.floor(score);
 }
 
-function gameLoop() {
+function gameLoop(timestamp) {
+  if (!lastTime) lastTime = timestamp;
+  const delta = (timestamp - lastTime) / 16.666; // relative to 60fps
+  lastTime = timestamp;
+
   if (gameOver) {
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -86,19 +94,19 @@ function gameLoop() {
     ctx.font = '30px sans-serif';
     ctx.fillText('Game Over!', 110, 300);
     ctx.font = '20px sans-serif';
-    ctx.fillText('Final Score: ' + score, 130, 340);
+    ctx.fillText('Final Score: ' + Math.floor(score), 130, 340);
     return;
   }
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  frames++;
-  if (frames % 60 === 0) createObstacle();
+
+  if (Math.random() < 0.02) createObstacle(); // random obstacle creation
 
   drawPlayer();
   drawObstacles();
-  updateObstacles();
+  updateObstacles(delta);
   checkCollision();
-  updateScore();
+  updateScore(delta);
 
   requestAnimationFrame(gameLoop);
 }
