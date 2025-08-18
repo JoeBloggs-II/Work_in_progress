@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Smooth Player Dodge Game with Dash</title>
+<title>Smooth Player Dodge Game with Dash & Particles</title>
 <style>
   body {
     margin: 0;
@@ -48,16 +48,30 @@ const player = {
 };
 
 let obstacles = [];
+let particles = [];
 let score = 0;
 let gameOver = false;
 let keys = { left: false, right: false, dash: false };
-let lastTime = 0;
+let lastTime = null;
 
 function createObstacle() {
   const width = Math.random() * 60 + 20;
   const x = Math.random() * (canvas.width - width);
   const speed = Math.random() * 2 + 2;
   obstacles.push({ x, y: -20, width, height: 20, speed });
+}
+
+function createDashParticles() {
+  for (let i = 0; i < 5; i++) {
+    particles.push({
+      x: player.x + player.width / 2,
+      y: player.y + player.height / 2,
+      vx: (Math.random() - 0.5) * 2,
+      vy: (Math.random() - 0.5) * 2,
+      alpha: 1,
+      size: Math.random() * 4 + 2
+    });
+  }
 }
 
 function drawPlayer() {
@@ -68,6 +82,22 @@ function drawPlayer() {
 function drawObstacles() {
   ctx.fillStyle = '#f00';
   obstacles.forEach(obs => ctx.fillRect(obs.x, obs.y, obs.width, obs.height));
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.fillStyle = `rgba(255,255,0,${p.alpha})`;
+    ctx.fillRect(p.x, p.y, p.size, p.size);
+  });
+}
+
+function updateParticles(delta) {
+  particles.forEach(p => {
+    p.x += p.vx * delta;
+    p.y += p.vy * delta;
+    p.alpha -= 0.03 * delta;
+  });
+  particles = particles.filter(p => p.alpha > 0);
 }
 
 function updateObstacles(delta) {
@@ -87,7 +117,7 @@ function checkCollision() {
 }
 
 function updateScore(delta) {
-  score += delta * 0.1; // now a number
+  score += delta * 0.016; // increment score based on real time
   document.getElementById('score').textContent = 'Score: ' + Math.floor(score);
 }
 
@@ -98,7 +128,8 @@ function updatePlayer() {
   // dash mechanic
   if (keys.dash && player.canDash) {
     player.vx += player.dashPower * (keys.left ? -1 : keys.right ? 1 : 0);
-    player.canDash = false; // only once per key press
+    player.canDash = false;
+    createDashParticles();
   }
 
   player.vx *= player.friction; // smooth deceleration
@@ -130,11 +161,14 @@ function gameLoop(timestamp) {
   if (Math.random() < 0.02) createObstacle();
 
   updatePlayer();
-  drawPlayer();
-  drawObstacles();
   updateObstacles(delta);
+  updateParticles(delta);
   checkCollision();
   updateScore(delta);
+
+  drawParticles();
+  drawPlayer();
+  drawObstacles();
 
   requestAnimationFrame(gameLoop);
 }
