@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Smoother Dodge the Blocks!</title>
+<title>Smooth Player Dodge Game</title>
 <style>
   body {
     margin: 0;
@@ -35,11 +35,12 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-const player = { x: 180, y: 550, width: 40, height: 40, speed: 5 };
+const player = { x: 180, y: 550, width: 40, height: 40, vx: 0, speed: 0.5, friction: 0.85 };
 let obstacles = [];
 let score = 0;
 let gameOver = false;
 
+let keys = { left: false, right: false };
 let lastTime = 0;
 
 function createObstacle() {
@@ -60,9 +61,7 @@ function drawObstacles() {
 }
 
 function updateObstacles(delta) {
-  obstacles.forEach(obs => {
-    obs.y += obs.speed * delta;
-  });
+  obstacles.forEach(obs => obs.y += obs.speed * delta);
   obstacles = obstacles.filter(obs => obs.y < canvas.height + obs.height);
 }
 
@@ -78,8 +77,20 @@ function checkCollision() {
 }
 
 function updateScore(delta) {
-  score += delta * 0.1; // smoother increment based on time
+  score += delta * 0.1;
   document.getElementById('score').textContent = 'Score: ' + Math.floor(score);
+}
+
+function updatePlayer() {
+  if (keys.left) player.vx -= player.speed;
+  if (keys.right) player.vx += player.speed;
+
+  player.vx *= player.friction; // smooth deceleration
+  player.x += player.vx;
+
+  // constrain within canvas
+  if (player.x < 0) { player.x = 0; player.vx = 0; }
+  if (player.x > canvas.width - player.width) { player.x = canvas.width - player.width; player.vx = 0; }
 }
 
 function gameLoop(timestamp) {
@@ -100,8 +111,9 @@ function gameLoop(timestamp) {
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (Math.random() < 0.02) createObstacle(); // random obstacle creation
+  if (Math.random() < 0.02) createObstacle();
 
+  updatePlayer();
   drawPlayer();
   drawObstacles();
   updateObstacles(delta);
@@ -112,9 +124,13 @@ function gameLoop(timestamp) {
 }
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'ArrowLeft') player.x -= player.speed;
-  if (e.key === 'ArrowRight') player.x += player.speed;
-  player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
+  if (e.key === 'ArrowLeft') keys.left = true;
+  if (e.key === 'ArrowRight') keys.right = true;
+});
+
+document.addEventListener('keyup', e => {
+  if (e.key === 'ArrowLeft') keys.left = false;
+  if (e.key === 'ArrowRight') keys.right = false;
 });
 
 gameLoop();
