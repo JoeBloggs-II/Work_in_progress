@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mandelbrot — WebGPU</title>
+<style>
+  html,body { height:100%; margin:0; background:#111; color:#ddd; font-family:system-ui,Segoe UI,Roboto,Arial; }
+  #ui { position:fixed; left:10px; top:10px; z-index:10; background:rgba(0,0,0,0.45); padding:8px; border-radius:8px; backdrop-filter: blur(6px); }
+  label, button { display:block; margin:6px 0; font-size:13px; color:#eee; }
+  canvas { display:block; width:100vw; height:100vh; }
+  .small { font-size:12px; color:#ccc; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div class="small">Drag to pan • Scroll to zoom • Double click to reset</div>
+  <label>Max iterations: <input id="iters" type="range" min="16" max="4096" value="512" style="width:220px"></label>
+  <label>Color: <select id="palette"><option value="0">Classic</option><option value="1">Fire</option><option value="2">Cool</option></select></label>
+  <button id="reset">Reset view</button>
+  <div class="small" id="status"></div>
+</div>
+
+<canvas id="gpuCanvas"></canvas>
+
+<script type="module">
+(async function(){
+  const canvas = document.getElementById('gpuCanvas');
+  // size canvas to device pixel ratio
+  function resizeCanvas() {
+    const dpr = Math.max(window.devicePixelRatio || 1, 1);
+    canvas.width = Math.floor(innerWidth * dpr);
+    canvas.height = Math.floor(innerHeight * dpr);
+    canvas.style.width = innerWidth + 'px';
+    canvas.style.height = innerHeight + 'px';
+  }
+  resizeCanvas();
+  window.addEventListener('resize', () => { resizeCanvas(); reconfigureSwapChain(); });
+
+  // UI
+  const status = document.getElementById('status');
+  const itersRange = document.getElementById('iters');
+  const paletteSelect = document.getElementById('palette');
+  const resetBtn = document.getElementById('reset');
+
+  if (!navigator.gpu) {
+    document.body.innerHTML = `
+      <div style="padding:20px;color:#eee;background:#222;font-family:system-ui;">
+        <h2>WebGPU not available</h2>
+        <p>Make sure you are using an up-to-date Chromium/Edge with WebGPU enabled. On some systems you may need a flag.</p>
+      </div>`;
+    return;
+  }
+
+  const adapter = await navigator.gpu.requestAdapter();
+  const device = await adapter.requestDevice();
+
+  const context = canvas.getContext('webgpu');
+
+  // choose a format compatible with the device and context
+  const format = navigator.gpu.getPreferredCanvasFormat ? navigator.gpu.getPreferredCanvasFormat() : "bgra8unorm";
+
+  function reconfigureSwapChain() {
+    context.configure({
+      device,
+      format,
+      alphaMode: 'opaque',
+      // no size here — the canvas size drives it
+    });
+  }
+  reconfigureSwapChain();
+
+  // WGSL shader: vertex pass-through + fragment that computes Mandelbrot
+  // Palette selection done in shader via uniform 'palette'
+  const shaderCode = `
+struct Uniforms {
+  centerX : f32;
+  centerY : f32;
+  scale   : f32;
+  maxIter : f32; // passed as float for convenience
+  palette : f32;
+  width   : f32;
+  height  : f32;
+};
+@binding(0) @group(0) var<uniform> u : Uniforms;
+
+struct VertexOut {
+  @builtin(position) pos : vec4<f32>;
+  @location(0) coords : vec2<f32>;
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vIndex : u32) -> VertexOut {
+  // fullscreen triangle trick (3 vertices)
+  var pos = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>( 3.0, -1.0),
+    vec2<f32>(-1.0,  3.0)
+  );
+  var xy = pos[vIndex];
+  var out : VertexOut;
+  out.pos = vec4<f32>(xy, 0.0, 1.0);
+
+  // coords in pixel space
+  out.coords = (xy * 0.5 + vec2<f32>(0.5,0.5)) * vec2<f32>(u.width, u.height);
+  return out;
+}
+
+fn hsv2rgb(h: f32, s: f32, v: f32) -> vec3<f32> {
+  let c = v * s;
+  let hp = h * 6.0;
+  let x = c * (1.0 - abs(fract(hp) * 2.0 - 1.0));
+  var r = 0.0;
+  var g = 0.0;
+  var b = 0.0;
+  if (0.0 <= hp && hp < 1.0) { r = c; g = x; b = 0.0; }
+  else if (1.0 <= hp && hp < 2.0) { r = x; g = c; b = 0.0; }
+  else if (2.0 <= hp && hp < 3.0) { r = 0.0; g = c; b = x; }
+  else if (3.0 <= hp && hp < 4.0) { r = 0.0; g = x; b = c; }
+  else if (4.0 <= hp && hp < 5.0) { r = x; g = 0.0; b = c; }
+  else { r = c; g = 0.0; b = x; }
+  let m = v - c;
+  return vec3<f32>(r + m, g + m, b + m);
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+  // Map pixel to complex plane
+  let px = in.coords.x;
+  let py = in.coords.y;
+  // preserve aspect
+  let aspect = u.width / u.height;
+  // map [0,width]x[0,height] to complex plane centered at (centerX,centerY)
+  let nx = (px / u.width  - 0.5) * (2.0 * u.scale * aspect) + u.centerX;
+  let ny = (py / u.height - 0.5) * (2.0 * u.scale) + u.centerY;
+
+  var zx = 0.0;
+  var zy = 0.0;
+  var iter : f32 = 0.0;
+  var i : i32 = 0;
+  let maxI : i32 = i32(u.maxIter);
+
+  // iterate z = z^2 + c with escape radius 2
+  for (var k: i32 = 0; k < maxI; k = k + 1) {
+    // z^2: (zx + i zy)^2 = (zx^2 - zy^2) + i(2*zx*zy)
+    let x2 = zx*zx;
+    let y2 = zy*zy;
+    if (x2 + y2 > 4.0) {
+      iter = f32(k);
+      break;
+    }
+    let new_zx = x2 - y2 + nx;
+    let new_zy = 2.0*zx*zy + ny;
+    zx = new_zx;
+    zy = new_zy;
+  }
+  // if never escaped, color black
+  if (iter == 0.0 && (zx*zx + zy*zy) <= 4.0) {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+  }
+
+  // smooth iteration count for better coloring
+  var mu = iter;
+  if (iter > 0.0) {
+    // continuous coloring: mu = n + 1 - log(log|z|)/log2
+    let log_zn = 0.5 * log(zx*zx + zy*zy);
+    let nu = log(log_zn / log(2.0)) / log(2.0);
+    mu = mu + 1.0 - nu;
+  }
+
+  // normalize
+  let t = mu / u.maxIter; // 0..1
+
+  // choose palette
+  var col = vec3<f32>(0.0,0.0,0.0);
+  if (u.palette < 0.5) {
+    // classic: hue sweep
+    col = hsv2rgb(0.95 - 0.7 * t, 0.8, 1.0);
+  } else if (abs(u.palette - 1.0) < 0.01) {
+    // fire
+    col = vec3<f32>(1.0, clamp(3.0*t - 1.5, 0.0, 1.0), clamp(6.0*t - 4.5, 0.0, 1.0));
+  } else {
+    // cool palette
+    col = hsv2rgb(0.6 + 0.4 * t, 0.7, 1.0 - 0.5 * t);
+  }
+
+  return vec4<f32>(col, 1.0);
+}
+`;
+
+  // create pipeline
+  const module = device.createShaderModule({code: shaderCode});
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: {
+      module,
+      entryPoint: 'vs_main',
+    },
+    fragment: {
+      module,
+      entryPoint: 'fs_main',
+      targets: [{ format }],
+    },
+    primitive: {
+      topology: 'triangle-list',
+      stripIndexFormat: undefined,
+    },
+  });
+
+  // uniform buffer layout: 8 floats (32 bytes), but we will pass a Float32Array(8)
+  // order: centerX, centerY, scale, maxIter, palette, width, height, padding
+  const uniformBufferSize = 8 * 4;
+  const uniformBuffer = device.createBuffer({
+    size: uniformBufferSize,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [{
+      binding: 0,
+      resource: { buffer: uniformBuffer }
+    }]
+  });
+
+  let centerX = -0.5;
+  let centerY = 0.0;
+  let scale = 1.5; // half-width in canonical view
+  let maxIter = parseInt(itersRange.value, 10);
+  let palette = 0;
+
+  function writeUniforms() {
+    const arr = new Float32Array(8);
+    arr[0] = centerX;
+    arr[1] = centerY;
+    arr[2] = scale;
+    arr[3] = maxIter;
+    arr[4] = palette;
+    arr[5] = canvas.width;
+    arr[6] = canvas.height;
+    arr[7] = 0.0;
+    device.queue.writeBuffer(uniformBuffer, 0, arr.buffer, arr.byteOffset, arr.byteLength);
+  }
+
+  // Interaction: pan and zoom
+  let dragging = false;
+  let lastX = 0, lastY = 0;
+  canvas.addEventListener('pointerdown', e => {
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointerup', e => {
+    dragging = false;
+    canvas.releasePointerCapture?.(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    // move in complex plane, taking into account canvas size and scale
+    const aspect = canvas.width / canvas.height;
+    centerX -= dx / canvas.width * 2.0 * scale * aspect;
+    centerY += dy / canvas.height * 2.0 * scale;
+    writeUniforms();
+  });
+
+  // wheel zoom, centered on mouse
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    // get mouse coord in pixel space
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+    const aspect = canvas.width / canvas.height;
+    // map to complex coord before zoom
+    const cx = (mx / canvas.width - 0.5) * (2.0 * scale * aspect) + centerX;
+    const cy = (my / canvas.height - 0.5) * (2.0 * scale) + centerY;
+
+    // zoom factor
+    const zoomFactor = Math.exp(-e.deltaY * 0.0015); // tweak sensitivity
+    scale *= zoomFactor;
+
+    // after zoom, move center so that the point under mouse stays fixed
+    const cx2 = (mx / canvas.width - 0.5) * (2.0 * scale * aspect) + centerX;
+    const cy2 = (my / canvas.height - 0.5) * (2.0 * scale) + centerY;
+    centerX += (cx - cx2);
+    centerY += (cy - cy2);
+
+    writeUniforms();
+  }, { passive: false });
+
+  // double click reset
+  canvas.addEventListener('dblclick', () => {
+    centerX = -0.5; centerY = 0.0; scale = 1.5;
+    writeUniforms();
+  });
+
+  // UI hooks
+  itersRange.addEventListener('input', () => {
+    maxIter = parseInt(itersRange.value, 10);
+    writeUniforms();
+  });
+  paletteSelect.addEventListener('change', () => {
+    palette = parseInt(paletteSelect.value, 10);
+    writeUniforms();
+  });
+  resetBtn.addEventListener('click', () => {
+    centerX = -0.5; centerY = 0.0; scale = 1.5; maxIter = 512; palette = 0;
+    itersRange.value = maxIter;
+    paletteSelect.value = 0;
+    writeUniforms();
+  });
+
+  // initial write
+  writeUniforms();
+
+  // Render loop
+  function frame() {
+    // update viewport size uniforms in case of resize
+    writeUniforms();
+
+    const commandEncoder = device.createCommandEncoder();
+    const textureView = context.getCurrentTexture().createView();
+
+    const passEncoder = commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view: textureView,
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        loadOp: 'clear',
+        storeOp: 'store',
+      }]
+    });
+    passEncoder.setPipeline(pipeline);
+    passEncoder.setBindGroup(0, bindGroup);
+    passEncoder.draw(3, 1, 0, 0); // fullscreen triangle
+    passEncoder.end();
+
+    device.queue.submit([commandEncoder.finish()]);
+
+    // display status
+    status.textContent = `center: (${centerX.toFixed(6)}, ${centerY.toFixed(6)}) scale: ${scale.toExponential(3)} iter: ${maxIter}`;
+
+    requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
