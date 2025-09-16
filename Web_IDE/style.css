@@ -1,0 +1,25 @@
+body, html {
+  margin: 0;
+  height: 100%;
+  display: flex;
+  font-family: sans-serif;
+}
+
+#ide-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.pane {
+  flex: 1;
+  border: 1px solid #ccc;
+}
+
+#editor {
+  height: 60%;
+}
+
+#terminal {
+  height: 40%;
+}
