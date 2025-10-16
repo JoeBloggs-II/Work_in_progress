@@ -60,14 +60,12 @@
     const btnReset = document.getElementById('btn-reset');
 
     function fitCanvas(){
-      const DPR = Math.min(window.devicePixelRatio || 1, 2);
       const styleW = Math.min(480, Math.floor(window.innerWidth*0.92));
       const styleH = Math.floor(styleW * (640/480));
       canvas.style.width = styleW + 'px';
       canvas.style.height = styleH + 'px';
-      canvas.width = Math.floor(styleW * DPR);
-      canvas.height = Math.floor(styleH * DPR);
-      ctx.setTransform(DPR,0,0,DPR,0,0);
+      canvas.width = styleW;
+      canvas.height = styleH;
     }
     window.addEventListener('resize', fitCanvas);
     fitCanvas();
@@ -80,13 +78,12 @@
     const flapSpeed = -350;
     const pipeWidth = 60;
     const pipeGap = 150;
-    const pipeSpacing = 230;
+    const pipeSpacing = 230; // horizontal distance between pipes
     const pipeSpeed = 160;
 
     let bird = null;
     let pipes = [];
     let lastTime = 0;
-    let spawnTimer = 0;
     let score = 0;
     let running = false;
     let gameOver = false;
@@ -95,7 +92,6 @@
       bird = { x:80, y: GAME_H()/2, w:34, h:24, vy:0, rotation:0 };
       pipes = [];
       lastTime = performance.now();
-      spawnTimer = -1500;
       score = 0;
       running = false;
       gameOver = false;
@@ -108,7 +104,7 @@
     function spawnPipe(){
       const h = GAME_H() - groundHeight;
       const gapY = h/2 + rnd(-60,60);
-      const pipe = { x: GAME_W() + 10, gapY, width: pipeWidth, passed:false };
+      const pipe = { x: GAME_W(), gapY, width: pipeWidth, passed:false };
       pipes.push(pipe);
     }
 
@@ -122,11 +118,13 @@
       bird.y += bird.vy * dt;
       bird.rotation = Math.max(-0.6, Math.min(1.2, bird.vy / 600));
 
-      spawnTimer += dt*1000;
-      if(spawnTimer > pipeSpacing){ spawnTimer = 0; spawnPipe(); }
+      // spawn new pipe when last pipe is far enough left
+      if(pipes.length === 0 || (GAME_W() - (pipes[pipes.length-1].x + pipeWidth)) > pipeSpacing){
+        spawnPipe();
+      }
 
       for(let p of pipes){ p.x -= pipeSpeed * dt; }
-      pipes = pipes.filter(p => p.x + p.width > -50);
+      pipes = pipes.filter(p => p.x + p.width > 0);
 
       for(let p of pipes){
         if(!p.passed && p.x + p.width < bird.x){ p.passed = true; score++; updateScore(); }
