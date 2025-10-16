@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Flappy Bird — Keyboard Controlled Flappy Bird</title>
+  <title>Flappy Raph — Keyboard Controlled Flappy Bird</title>
   <style>
     :root{--bg:#70c5ce;--bird:#ffcc00;--pipe:#228B22;--ground:#de9b45}
     html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial}
@@ -18,14 +18,13 @@
     button{border:0;background:#fff;padding:6px 10px;border-radius:6px;cursor:pointer}
     button:active{transform:translateY(1px)}
     .small{font-size:12px;color:#064}
-    /* simple responsive scaling */
     @media (max-width:520px){#game{height:540px}}
   </style>
 </head>
 <body>
   <div class="game-wrap">
     <header>
-      <h1>Flappy Bird — press Space or ↑ to flap</h1>
+      <h1>Flappy Raph — press Space or ↑ to flap</h1>
       <div class="controls">Score: <span id="score">0</span></div>
     </header>
 
@@ -50,9 +49,6 @@
   </div>
 
   <script>
-  // Flappy bird-like game implemented in a single HTML file.
-  // Controls: Space or ArrowUp to flap, R to restart, click Start to resume.
-
   (function(){
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
@@ -63,7 +59,6 @@
     const btnStart = document.getElementById('btn-start');
     const btnReset = document.getElementById('btn-reset');
 
-    // resolution handling
     function fitCanvas(){
       const DPR = Math.min(window.devicePixelRatio || 1, 2);
       const styleW = Math.min(480, Math.floor(window.innerWidth*0.92));
@@ -77,19 +72,17 @@
     window.addEventListener('resize', fitCanvas);
     fitCanvas();
 
-    // Game constants
-    const GAME_W = () => canvas.clientWidth;
-    const GAME_H = () => canvas.clientHeight;
+    function GAME_W(){ return canvas.width; }
+    function GAME_H(){ return canvas.height; }
 
     const groundHeight = 60;
-    const gravity = 1200; // px/s^2
-    const flapSpeed = -350; // px/s (instant velocity set)
+    const gravity = 1200;
+    const flapSpeed = -350;
     const pipeWidth = 60;
-    const pipeGap = 150; // vertical gap size
-    const pipeSpacing = 230; // horizontal distance between pipes
-    const pipeSpeed = 160; // px/s
+    const pipeGap = 150;
+    const pipeSpacing = 230;
+    const pipeSpeed = 160;
 
-    // State
     let bird = null;
     let pipes = [];
     let lastTime = 0;
@@ -102,7 +95,7 @@
       bird = { x:80, y: GAME_H()/2, w:34, h:24, vy:0, rotation:0 };
       pipes = [];
       lastTime = performance.now();
-      spawnTimer = 0;
+      spawnTimer = -1500;
       score = 0;
       running = false;
       gameOver = false;
@@ -110,102 +103,70 @@
       showMessage('Press Space or ↑ to start','');
     }
 
-    // Utilities
     function rnd(min,max){return Math.random()*(max-min)+min}
 
-    // Pipe generator: top and bottom rectangles with a gap
     function spawnPipe(){
       const h = GAME_H() - groundHeight;
-      const gapY = rnd(80, h - 80 - pipeGap);
+      const gapY = h/2 + rnd(-60,60);
       const pipe = { x: GAME_W() + 10, gapY, width: pipeWidth, passed:false };
       pipes.push(pipe);
     }
 
-    // Collision detection: axis-aligned bounding box
     function rectsOverlap(a,b){
       return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
     }
 
     function update(dt){
       if(!running) return;
-      // bird physics
       bird.vy += gravity * dt;
       bird.y += bird.vy * dt;
       bird.rotation = Math.max(-0.6, Math.min(1.2, bird.vy / 600));
 
-      // spawn pipes
       spawnTimer += dt*1000;
       if(spawnTimer > pipeSpacing){ spawnTimer = 0; spawnPipe(); }
 
-      // move pipes
       for(let p of pipes){ p.x -= pipeSpeed * dt; }
-      // remove offscreen
       pipes = pipes.filter(p => p.x + p.width > -50);
 
-      // scoring and collision
       for(let p of pipes){
         if(!p.passed && p.x + p.width < bird.x){ p.passed = true; score++; updateScore(); }
-
-        // top rect
         const topRect = { x: p.x, y: 0, w: p.width, h: p.gapY };
         const bottomRect = { x: p.x, y: p.gapY + pipeGap, w: p.width, h: GAME_H() - (p.gapY + pipeGap) - groundHeight };
         const birdRect = { x: bird.x - bird.w/2, y: bird.y - bird.h/2, w: bird.w, h: bird.h };
         if(rectsOverlap(birdRect, topRect) || rectsOverlap(birdRect, bottomRect)){
-          // collision
           running = false; gameOver = true; showMessage('Game Over', 'Press R to restart');
         }
       }
 
-      // ground collision
       if(bird.y + bird.h/2 > GAME_H() - groundHeight){
         bird.y = GAME_H() - groundHeight - bird.h/2;
         running = false; gameOver = true; showMessage('Game Over', 'You hit the ground — press R to try again');
       }
-
-      // ceiling clamp
       if(bird.y - bird.h/2 < 0){ bird.y = bird.h/2; bird.vy = 0; }
     }
 
     function draw(){
-      // clear
       ctx.clearRect(0,0,canvas.width,canvas.height);
-      // sky background (subtle gradient)
       const g = ctx.createLinearGradient(0,0,0,GAME_H());
       g.addColorStop(0,'#9fe7ee'); g.addColorStop(1,'#7ddfe6');
       ctx.fillStyle = g; ctx.fillRect(0,0,GAME_W(),GAME_H());
-
-      // pipes
       for(let p of pipes){
-        // top
         ctx.fillStyle = '#2e8b57';
         ctx.fillRect(p.x, 0, p.width, p.gapY);
-        // bottom
         ctx.fillRect(p.x, p.gapY + pipeGap, p.width, GAME_H() - (p.gapY + pipeGap) - groundHeight);
-        // caps (rounded look)
         ctx.fillStyle = '#196d3a'; ctx.fillRect(p.x-6, Math.max(0,p.gapY-10), p.width+12, 10);
       }
-
-      // ground
       ctx.fillStyle = '#d99c44'; ctx.fillRect(0, GAME_H()-groundHeight, GAME_W(), groundHeight);
-      // simple ground texture
       for(let i=0;i<GAME_W();i+=24){ ctx.fillStyle = 'rgba(0,0,0,0.03)'; ctx.fillRect(i, GAME_H()-groundHeight, 12, 6); }
-
-      // bird (simple circle + wing)
       ctx.save();
       ctx.translate(bird.x, bird.y);
       ctx.rotate(bird.rotation);
-      // body
       ctx.fillStyle = '#ffdd33'; ctx.beginPath(); ctx.ellipse(0,0,bird.w/2,bird.h/2,0,0,Math.PI*2); ctx.fill();
-      // beak
       ctx.fillStyle = '#ff8c00'; ctx.beginPath(); ctx.moveTo(bird.w/2-2,0); ctx.lineTo(bird.w/2+12,6); ctx.lineTo(bird.w/2+12,-6); ctx.closePath(); ctx.fill();
-      // eye
       ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(4,-4,3,0,Math.PI*2); ctx.fill();
-      // wing (flap more when vy negative)
       const wingOffset = Math.max(-6, Math.min(12, -bird.vy/20));
       ctx.fillStyle = 'rgba(0,0,0,0.08)'; ctx.beginPath(); ctx.ellipse(-2, wingOffset, 10,6, Math.PI/6,0,Math.PI*2); ctx.fill();
       ctx.restore();
-
-      // score (big center)
       ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = '600 48px system-ui'; ctx.textAlign = 'center';
       ctx.fillText(score, GAME_W()/2, 80);
     }
@@ -218,7 +179,6 @@
       requestAnimationFrame(gameLoop);
     }
 
-    // input
     function flap(){
       if(gameOver) return;
       if(!running){ running = true; hideMessage(); }
@@ -226,36 +186,18 @@
     }
 
     window.addEventListener('keydown', (e)=>{
-      if(e.code === 'Space' || e.code === 'ArrowUp'){
-        e.preventDefault(); flap();
-      }
-      if(e.key === 'r' || e.key === 'R'){
-        resetState();
-      }
-      if(e.code === 'KeyP'){
-        running = !running; showMessage(running ? '': 'Paused', running ? '': 'Press Space to resume');
-      }
+      if(e.code === 'Space' || e.code === 'ArrowUp'){ e.preventDefault(); flap(); }
+      if(e.key === 'r' || e.key === 'R') resetState();
+      if(e.code === 'KeyP'){ running = !running; showMessage(running?'':'Paused', running?'':'Press Space to resume'); }
     });
-
-    // touch / click for mobile
     canvas.addEventListener('pointerdown', (e)=>{ flap(); });
-
     function updateScore(){ scoreEl.textContent = score; }
-
-    function showMessage(title, body){
-      msgTitle.textContent = title || '';
-      msgBody.textContent = body || '';
-      msg.style.display = 'block';
-    }
-    function hideMessage(){ msg.style.display = 'none'; }
-
-    btnStart.addEventListener('click', ()=>{ if(gameOver) return; running = true; hideMessage(); });
+    function showMessage(title, body){ msgTitle.textContent = title||''; msgBody.textContent = body||''; msg.style.display='block'; }
+    function hideMessage(){ msg.style.display='none'; }
+    btnStart.addEventListener('click', ()=>{ if(gameOver) return; running=true; hideMessage(); });
     btnReset.addEventListener('click', resetState);
-
-    // initialize
     resetState();
     requestAnimationFrame((t)=>{ lastTime = t; requestAnimationFrame(gameLoop); });
-
   })();
   </script>
 </body>
