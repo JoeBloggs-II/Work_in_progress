@@ -2,10 +2,10 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Textured Voxel Block</title>
+<title>Voxel Chunk Example</title>
 <style>
-  body { margin: 0; overflow: hidden; }
-  canvas { display: block; background: #87CEEB; } /* sky blue */
+  body { margin:0; overflow:hidden; background:#87CEEB; }
+  canvas { display:block; }
 </style>
 </head>
 <body>
@@ -20,7 +20,13 @@ const width = canvas.width;
 const height = canvas.height;
 
 // Camera
-const cam = { x: 0, y: 1.5, z: 5 };
+const cam = {x: 1.5, y: 2, z: 5};
+let camAngleY = 0;
+
+// Keyboard controls
+const keys = {};
+window.addEventListener('keydown', e=>keys[e.key.toLowerCase()]=true);
+window.addEventListener('keyup', e=>keys[e.key.toLowerCase()]=false);
 
 // Perspective projection
 function project(point) {
@@ -32,90 +38,110 @@ function project(point) {
 
 // Cube vertices
 const cubeVertices = [
-    {x:-0.5, y:0,   z:-0.5}, // 0 bottom-left-back
-    {x:0.5,  y:0,   z:-0.5}, // 1 bottom-right-back
-    {x:0.5,  y:0,   z:0.5},  // 2 bottom-right-front
-    {x:-0.5, y:0,   z:0.5},  // 3 bottom-left-front
-    {x:-0.5, y:1,   z:-0.5}, // 4 top-left-back
-    {x:0.5,  y:1,   z:-0.5}, // 5 top-right-back
-    {x:0.5,  y:1,   z:0.5},  // 6 top-right-front
-    {x:-0.5, y:1,   z:0.5}   // 7 top-left-front
+    {x:0, y:0, z:0}, // 0 bottom-left-back
+    {x:1, y:0, z:0}, // 1 bottom-right-back
+    {x:1, y:0, z:1}, // 2 bottom-right-front
+    {x:0, y:0, z:1}, // 3 bottom-left-front
+    {x:0, y:1, z:0}, // 4 top-left-back
+    {x:1, y:1, z:0}, // 5 top-right-back
+    {x:1, y:1, z:1}, // 6 top-right-front
+    {x:0, y:1, z:1}  // 7 top-left-front
 ];
 
-// Cube faces: each with vertex indices and texture image path
-const cubeFaces = [
-    {verts:[4,5,6,7], img: 'assets/top.jpeg'},    // Top (grass)
-    {verts:[0,1,2,3], img: 'assets/bottom.jpeg'}, // Bottom (dirt)
-    {verts:[3,2,6,7], img: 'assets/side.jpeg'},   // Front
-    {verts:[0,1,5,4], img: 'assets/side.jpeg'},   // Back
-    {verts:[1,2,6,5], img: 'assets/side.jpeg'},   // Right
-    {verts:[0,3,7,4], img: 'assets/side.jpeg'}    // Left
+// Faces per cube
+const faceDefs = [
+    {verts:[4,5,6,7], img:'assets/top.png'},    // top
+    {verts:[0,1,2,3], img:'assets/bottom.png'}, // bottom
+    {verts:[3,2,6,7], img:'assets/side.png'},   // front
+    {verts:[0,1,5,4], img:'assets/side.png'},   // back
+    {verts:[1,2,6,5], img:'assets/side.png'},   // right
+    {verts:[0,3,7,4], img:'assets/side.png'}    // left
 ];
 
-// Load images
-for (let face of cubeFaces) {
+// Load textures once
+for (let f of faceDefs){
     const img = new Image();
-    img.src = face.img;
-    face.texture = img;
+    img.src = f.img;
+    f.texture = img;
 }
 
-// Draw a face with simple texture mapping
-function drawFace(face) {
-    const v = face.verts.map(i => project(cubeVertices[i]));
-    
-    // Approximate mapping by drawing the image into bounding box
-    const minX = Math.min(...v.map(p => p.x));
-    const maxX = Math.max(...v.map(p => p.x));
-    const minY = Math.min(...v.map(p => p.y));
-    const maxY = Math.max(...v.map(p => p.y));
-    
+// Generate 3x3x1 chunk
+const chunk = [];
+for(let x=0;x<3;x++){
+    for(let z=0;z<3;z++){
+        chunk.push({x:x, y:0, z:z});
+    }
+}
+
+// Check if a face is visible (no neighbor in that direction)
+function isFaceVisible(block, dir){
+    const nx = block.x + dir.x;
+    const ny = block.y + dir.y;
+    const nz = block.z + dir.z;
+    return !chunk.some(b=>b.x===nx && b.y===ny && b.z===nz);
+}
+
+// Directions for faces (order matches faceDefs)
+const faceDirs = [
+    {x:0,y:1,z:0},  // top
+    {x:0,y:-1,z:0}, // bottom
+    {x:0,y:0,z:1},  // front
+    {x:0,y:0,z:-1}, // back
+    {x:1,y:0,z:0},  // right
+    {x:-1,y:0,z:0}  // left
+];
+
+// Draw a face (simple bounding-box texture mapping)
+function drawFace(block, faceIndex){
+    const verts = faceDefs[faceIndex].verts.map(i=>{
+        const v = cubeVertices[i];
+        return {x:v.x+block.x, y:v.y+block.y, z:v.z+block.z};
+    });
+    const proj = verts.map(project);
+    const minX = Math.min(...proj.map(p=>p.x));
+    const maxX = Math.max(...proj.map(p=>p.x));
+    const minY = Math.min(...proj.map(p=>p.y));
+    const maxY = Math.max(...proj.map(p=>p.y));
     const w = maxX - minX;
     const h = maxY - minY;
-    
-    if (face.texture.complete) {
-        ctx.drawImage(face.texture, minX, minY, w, h);
-    } else {
-        ctx.fillStyle = '#f0f'; // fallback color
-        ctx.fillRect(minX, minY, w, h);
-    }
+    const tex = faceDefs[faceIndex].texture;
+    if(tex.complete) ctx.drawImage(tex, minX, minY, w, h);
+    else { ctx.fillStyle='#f0f'; ctx.fillRect(minX,minY,w,h); }
 }
 
-// Rotation around Y axis
-let angle = 0;
-function rotateCube() {
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    for (let v of cubeVertices) {
-        const x = v.x;
-        const z = v.z;
-        v.x = x * cos - z * sin;
-        v.z = x * sin + z * cos;
-    }
+// Camera movement
+function updateCamera(){
+    const speed = 0.1;
+    const dx = Math.sin(camAngleY)*speed;
+    const dz = Math.cos(camAngleY)*speed;
+    if(keys['w']){ cam.x += dx; cam.z += dz; }
+    if(keys['s']){ cam.x -= dx; cam.z -= dz; }
+    if(keys['a']){ cam.x -= dz; cam.z += dx; }
+    if(keys['d']){ cam.x += dz; cam.z -= dx; }
+    if(keys['arrowleft']) camAngleY -= 0.05;
+    if(keys['arrowright']) camAngleY += 0.05;
 }
 
 // Main loop
-function loop() {
+function loop(){
     ctx.clearRect(0,0,width,height);
-    rotateCube();
-    
-    // Simple painter's algorithm: draw back faces first (based on z)
-    cubeFaces.sort((a,b) => {
-        const za = a.verts.reduce((sum,i)=>sum+cubeVertices[i].z,0)/4;
-        const zb = b.verts.reduce((sum,i)=>sum+cubeVertices[i].z,0)/4;
-        return za - zb;
-    });
+    updateCamera();
 
-    for (let face of cubeFaces) drawFace(face);
-    
-    angle += 0.01;
+    // Draw all blocks
+    for(const block of chunk){
+        for(let i=0;i<6;i++){
+            if(isFaceVisible(block, faceDirs[i])) drawFace(block,i);
+        }
+    }
+
     requestAnimationFrame(loop);
 }
 loop();
 
 // Handle resize
-window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+window.addEventListener('resize',()=>{
+    canvas.width=window.innerWidth;
+    canvas.height=window.innerHeight;
 });
 </script>
 </body>
