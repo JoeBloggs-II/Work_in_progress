@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Textured Voxel Block</title>
+<style>
+  body { margin: 0; overflow: hidden; }
+  canvas { display: block; background: #87CEEB; } /* sky blue */
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const width = canvas.width;
+const height = canvas.height;
+
+// Camera
+const cam = { x: 0, y: 1.5, z: 5 };
+
+// Perspective projection
+function project(point) {
+    const fov = 500;
+    const x = (point.x - cam.x) * (fov / (point.z - cam.z)) + width/2;
+    const y = -(point.y - cam.y) * (fov / (point.z - cam.z)) + height/2;
+    return {x, y};
+}
+
+// Cube vertices
+const cubeVertices = [
+    {x:-0.5, y:0,   z:-0.5}, // 0 bottom-left-back
+    {x:0.5,  y:0,   z:-0.5}, // 1 bottom-right-back
+    {x:0.5,  y:0,   z:0.5},  // 2 bottom-right-front
+    {x:-0.5, y:0,   z:0.5},  // 3 bottom-left-front
+    {x:-0.5, y:1,   z:-0.5}, // 4 top-left-back
+    {x:0.5,  y:1,   z:-0.5}, // 5 top-right-back
+    {x:0.5,  y:1,   z:0.5},  // 6 top-right-front
+    {x:-0.5, y:1,   z:0.5}   // 7 top-left-front
+];
+
+// Cube faces: each with vertex indices and texture image path
+const cubeFaces = [
+    {verts:[4,5,6,7], img: 'assets/top.png'},    // Top (grass)
+    {verts:[0,1,2,3], img: 'assets/bottom.png'}, // Bottom (dirt)
+    {verts:[3,2,6,7], img: 'assets/side.png'},   // Front
+    {verts:[0,1,5,4], img: 'assets/side.png'},   // Back
+    {verts:[1,2,6,5], img: 'assets/side.png'},   // Right
+    {verts:[0,3,7,4], img: 'assets/side.png'}    // Left
+];
+
+// Load images
+for (let face of cubeFaces) {
+    const img = new Image();
+    img.src = face.img;
+    face.texture = img;
+}
+
+// Draw a face with simple texture mapping
+function drawFace(face) {
+    const v = face.verts.map(i => project(cubeVertices[i]));
+    
+    // Approximate mapping by drawing the image into bounding box
+    const minX = Math.min(...v.map(p => p.x));
+    const maxX = Math.max(...v.map(p => p.x));
+    const minY = Math.min(...v.map(p => p.y));
+    const maxY = Math.max(...v.map(p => p.y));
+    
+    const w = maxX - minX;
+    const h = maxY - minY;
+    
+    if (face.texture.complete) {
+        ctx.drawImage(face.texture, minX, minY, w, h);
+    } else {
+        ctx.fillStyle = '#f0f'; // fallback color
+        ctx.fillRect(minX, minY, w, h);
+    }
+}
+
+// Rotation around Y axis
+let angle = 0;
+function rotateCube() {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    for (let v of cubeVertices) {
+        const x = v.x;
+        const z = v.z;
+        v.x = x * cos - z * sin;
+        v.z = x * sin + z * cos;
+    }
+}
+
+// Main loop
+function loop() {
+    ctx.clearRect(0,0,width,height);
+    rotateCube();
+    
+    // Simple painter's algorithm: draw back faces first (based on z)
+    cubeFaces.sort((a,b) => {
+        const za = a.verts.reduce((sum,i)=>sum+cubeVertices[i].z,0)/4;
+        const zb = b.verts.reduce((sum,i)=>sum+cubeVertices[i].z,0)/4;
+        return za - zb;
+    });
+
+    for (let face of cubeFaces) drawFace(face);
+    
+    angle += 0.01;
+    requestAnimationFrame(loop);
+}
+loop();
+
+// Handle resize
+window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+});
+</script>
+</body>
+</html>
