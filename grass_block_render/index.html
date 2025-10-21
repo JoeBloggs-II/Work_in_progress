@@ -2,179 +2,152 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Voxel Chunk with First-Person Camera</title>
+<title>Voxel Engine (Proper Camera)</title>
 <style>
   body { margin:0; overflow:hidden; background:#87CEEB; }
-  canvas { display:block; cursor: none; }
+  canvas { display:block; }
 </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
 <script>
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+canvas.width = innerWidth;
+canvas.height = innerHeight;
 
-const width = canvas.width;
-const height = canvas.height;
+const WIDTH = canvas.width;
+const HEIGHT = canvas.height;
+
+const deg = a => a * Math.PI / 180;
 
 // Camera
-const cam = {x:1.5, y:2, z:5};
-let yaw = 0;   // Y rotation
-let pitch = 0; // X rotation
+let cam = { x: 2, y: 1.5, z: 5 };
+let yaw = 0;
+let pitch = 0;
 
-// Mouse look
-let mouseDown = false;
-canvas.requestPointerLock = canvas.requestPointerLock || canvas.mozRequestPointerLock;
-canvas.onclick = () => canvas.requestPointerLock();
-document.addEventListener('pointerlockchange', ()=>{ mouseDown = document.pointerLockElement === canvas; });
-
-document.addEventListener('mousemove', e=>{
-    if(mouseDown){
-        yaw -= e.movementX * 0.002;
-        pitch -= e.movementY * 0.002;
-        if(pitch > Math.PI/2) pitch = Math.PI/2;
-        if(pitch < -Math.PI/2) pitch = -Math.PI/2;
-    }
-});
-
-// Keyboard controls
+// Controls
 const keys = {};
-window.addEventListener('keydown', e=>keys[e.key.toLowerCase()]=true);
-window.addEventListener('keyup', e=>keys[e.key.toLowerCase()]=false);
+window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
 
-// Perspective projection
-function project(point){
-    // Apply camera rotation
-    const cosYaw = Math.cos(yaw), sinYaw = Math.sin(yaw);
-    const cosPitch = Math.cos(pitch), sinPitch = Math.sin(pitch);
-
-    // Translate point relative to camera
-    let x = point.x - cam.x;
-    let y = point.y - cam.y;
-    let z = point.z - cam.z;
-
-    // Rotate around Y (yaw)
-    let xr = cosYaw*x + sinYaw*z;
-    let zr = -sinYaw*x + cosYaw*z;
-
-    // Rotate around X (pitch)
-    let yr = cosPitch*y - sinPitch*zr;
-    let zr2 = sinPitch*y + cosPitch*zr;
-
-    const fov = 500;
-    const px = xr * (fov / zr2) + width/2;
-    const py = -yr * (fov / zr2) + height/2;
-    return {x:px, y:py, z:zr2};
-}
-
-// Cube vertices
-const cubeVertices = [
-    {x:0, y:0, z:0}, // 0 bottom-left-back
-    {x:1, y:0, z:0}, // 1 bottom-right-back
-    {x:1, y:0, z:1}, // 2 bottom-right-front
-    {x:0, y:0, z:1}, // 3 bottom-left-front
-    {x:0, y:1, z:0}, // 4 top-left-back
-    {x:1, y:1, z:0}, // 5 top-right-back
-    {x:1, y:1, z:1}, // 6 top-right-front
-    {x:0, y:1, z:1}  // 7 top-left-front
-];
-
-// Faces with texture paths
-const faceDefs = [
-    {verts:[4,5,6,7], img:'assets/top.jpeg'},    // top
-    {verts:[0,1,2,3], img:'assets/bottom.jpeg'}, // bottom
-    {verts:[3,2,6,7], img:'assets/side.jpeg'},   // front
-    {verts:[0,1,5,4], img:'assets/side.jpeg'},   // back
-    {verts:[1,2,6,5], img:'assets/side.jpeg'},   // right
-    {verts:[0,3,7,4], img:'assets/side.jpeg'}    // left
-];
+document.addEventListener("mousemove", e => {
+  if (document.pointerLockElement === canvas) {
+    yaw -= e.movementX * 0.002;
+    pitch -= e.movementY * 0.002;
+    pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+  }
+});
+canvas.addEventListener("click", () => canvas.requestPointerLock());
 
 // Load textures
-for(let f of faceDefs){ const img=new Image(); img.src=f.img; f.texture=img; }
+const tex = {
+  top: new Image(),
+  bottom: new Image(),
+  side: new Image()
+};
+tex.top.src = "assets/top.png";
+tex.bottom.src = "assets/bottom.png";
+tex.side.src = "assets/side.png";
 
-// 3x3x1 chunk
-const chunk = [];
-for(let x=0;x<3;x++) for(let z=0;z<3;z++) chunk.push({x:x, y:0, z:z});
-
-// Directions for face visibility
-const faceDirs = [
-    {x:0,y:1,z:0},{x:0,y:-1,z:0},{x:0,y:0,z:1},
-    {x:0,y:0,z:-1},{x:1,y:0,z:0},{x:-1,y:0,z:0}
+// Cube model (unit cube)
+const cubeVerts = [
+  [0,0,0],[1,0,0],[1,0,1],[0,0,1], // bottom
+  [0,1,0],[1,1,0],[1,1,1],[0,1,1]  // top
 ];
 
-// Face culling
-function isFaceVisible(block, dir){
-    const nx=block.x+dir.x, ny=block.y+dir.y, nz=block.z+dir.z;
-    return !chunk.some(b=>b.x===nx && b.y===ny && b.z===nz);
+// Each face: vertices + texture
+const faces = [
+  {v:[4,5,6,7], img:"top"},    // top
+  {v:[0,1,2,3], img:"bottom"}, // bottom
+  {v:[3,2,6,7], img:"side"},   // front
+  {v:[0,1,5,4], img:"side"},   // back
+  {v:[1,2,6,5], img:"side"},   // right
+  {v:[0,3,7,4], img:"side"}    // left
+];
+
+// Simple world (3x3 dirt platform)
+const world = [];
+for (let x=0; x<3; x++) for (let z=0; z<3; z++) world.push({x,y:0,z});
+
+// Projection
+function project(x, y, z) {
+  // Translate relative to camera
+  let dx = x - cam.x;
+  let dy = y - cam.y;
+  let dz = z - cam.z;
+
+  // Rotate by yaw
+  const cosy = Math.cos(yaw), siny = Math.sin(yaw);
+  const dxz = dx * cosy - dz * siny;
+  const dzx = dx * siny + dz * cosy;
+
+  // Rotate by pitch
+  const cosp = Math.cos(pitch), sinp = Math.sin(pitch);
+  const dyz = dy * cosp - dzx * sinp;
+  const dzz = dy * sinp + dzx * cosp;
+
+  const fov = 500;
+  const sx = (dxz * fov / dzz) + WIDTH / 2;
+  const sy = (-dyz * fov / dzz) + HEIGHT / 2;
+  return {x: sx, y: sy, z: dzz};
 }
 
-// Draw face (bounding-box image mapping)
-function drawFace(block, faceIndex){
-    const verts = faceDefs[faceIndex].verts.map(i=>{
-        const v = cubeVertices[i];
-        return {x:v.x+block.x, y:v.y+block.y, z:v.z+block.z};
-    });
-    const proj = verts.map(project);
-
-    // Simple painter's algorithm: draw as image bounding box
-    const minX=Math.min(...proj.map(p=>p.x));
-    const maxX=Math.max(...proj.map(p=>p.x));
-    const minY=Math.min(...proj.map(p=>p.y));
-    const maxY=Math.max(...proj.map(p=>p.y));
-    const w = maxX-minX;
-    const h = maxY-minY;
-
-    const tex = faceDefs[faceIndex].texture;
-    if(tex.complete) ctx.drawImage(tex, minX, minY, w, h);
-    else { ctx.fillStyle='#f0f'; ctx.fillRect(minX,minY,w,h); }
+function updateCamera() {
+  const speed = 0.1;
+  const forward = { x: Math.sin(yaw), z: Math.cos(yaw) };
+  const right = { x: Math.cos(yaw), z: -Math.sin(yaw) };
+  if (keys['w']) { cam.x += forward.x*speed; cam.z += forward.z*speed; }
+  if (keys['s']) { cam.x -= forward.x*speed; cam.z -= forward.z*speed; }
+  if (keys['a']) { cam.x += right.x*speed; cam.z += right.z*speed; }
+  if (keys['d']) { cam.x -= right.x*speed; cam.z -= right.z*speed; }
+  if (keys[' ']) cam.y += speed;
+  if (keys['shift']) cam.y -= speed;
 }
 
-// Update camera movement
-function updateCamera(){
-    const speed = 0.1;
-    const forward = {x: Math.sin(yaw)*Math.cos(pitch), y: Math.sin(pitch), z: Math.cos(yaw)*Math.cos(pitch)};
-    const right = {x: Math.sin(yaw-Math.PI/2), y:0, z: Math.cos(yaw-Math.PI/2)};
-    if(keys['w']){ cam.x+=forward.x*speed; cam.y+=forward.y*speed; cam.z+=forward.z*speed; }
-    if(keys['s']){ cam.x-=forward.x*speed; cam.y-=forward.y*speed; cam.z-=forward.z*speed; }
-    if(keys['a']){ cam.x+=right.x*speed; cam.z+=right.z*speed; }
-    if(keys['d']){ cam.x-=right.x*speed; cam.z-=right.z*speed; }
-    if(keys[' ']) cam.y+=speed; // jump
-    if(keys['shift']) cam.y-=speed; // crouch
+function drawFace(face, block) {
+  const verts = face.v.map(i=>{
+    const v = cubeVerts[i];
+    return project(v[0]+block.x, v[1]+block.y, v[2]+block.z);
+  });
+
+  // Backface culling (only draw if facing camera)
+  const ax = verts[1].x - verts[0].x;
+  const ay = verts[1].y - verts[0].y;
+  const bx = verts[2].x - verts[0].x;
+  const by = verts[2].y - verts[0].y;
+  const cross = ax*by - ay*bx;
+  if (cross < 0) return; // facing away
+
+  // Draw texture as simple quad
+  const minX = Math.min(...verts.map(v=>v.x));
+  const maxX = Math.max(...verts.map(v=>v.x));
+  const minY = Math.min(...verts.map(v=>v.y));
+  const maxY = Math.max(...verts.map(v=>v.y));
+  const w = maxX - minX, h = maxY - minY;
+  const img = tex[face.img];
+  if (img.complete) ctx.drawImage(img, minX, minY, w, h);
 }
 
-// Main loop
-function loop(){
-    ctx.clearRect(0,0,width,height);
-    updateCamera();
+function loop() {
+  ctx.clearRect(0,0,WIDTH,HEIGHT);
+  updateCamera();
 
-    // Gather all visible faces
-    const facesToDraw=[];
-    for(const block of chunk){
-        for(let i=0;i<6;i++){
-            if(isFaceVisible(block, faceDirs[i])) facesToDraw.push({block, faceIndex:i});
-        }
+  // Collect visible faces and sort by distance
+  const drawList = [];
+  for (let block of world) {
+    for (let f of faces) {
+      const center = project(block.x+0.5, block.y+0.5, block.z+0.5);
+      if (center.z > 0) drawList.push({block, face:f, dist:center.z});
     }
+  }
+  drawList.sort((a,b)=>b.dist-a.dist);
 
-    // Sort faces by distance from camera (farther first)
-    facesToDraw.sort((a,b)=>{
-        const zb = (cubeVertices[faceDefs[b.faceIndex].verts[0]].z+ b.block.z) - cam.z;
-        const za = (cubeVertices[faceDefs[a.faceIndex].verts[0]].z+ a.block.z) - cam.z;
-        return zb - za;
-    });
+  for (let item of drawList) drawFace(item.face, item.block);
 
-    for(const f of facesToDraw) drawFace(f.block, f.faceIndex);
-
-    requestAnimationFrame(loop);
+  requestAnimationFrame(loop);
 }
 loop();
-
-// Resize
-window.addEventListener('resize',()=>{
-    canvas.width=window.innerWidth;
-    canvas.height=window.innerHeight;
-});
 </script>
 </body>
 </html>
