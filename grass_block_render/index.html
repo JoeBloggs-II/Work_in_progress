@@ -1,153 +1,472 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
-<meta charset="UTF-8">
-<title>Voxel Engine (Proper Camera)</title>
+<meta charset="utf-8" />
+<title>From-scratch Voxel Engine — Matrix Math + Software Rasterizer</title>
 <style>
-  body { margin:0; overflow:hidden; background:#87CEEB; }
-  canvas { display:block; }
+  html,body { height:100%; margin:0; background:#87CEEB; }
+  canvas { display:block; margin:0 auto; background:#87CEEB; cursor: none; }
+  #hud { position:fixed; left:8px; top:8px; color:#111; font-family:monospace; background:rgba(255,255,255,0.8); padding:6px; border-radius:6px; }
 </style>
 </head>
 <body>
-<canvas id="canvas"></canvas>
+<canvas id="screen"></canvas>
+<div id="hud">WASD move • Mouse look (click) • Space up • Shift down • Chunks: 2×2 • Resolution: auto</div>
+
 <script>
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-canvas.width = innerWidth;
-canvas.height = innerHeight;
+/* ============================
+   CONFIG
+   ============================ */
+const CHUNK_SIZE = 16;     // X/Z dimension per chunk
+const CHUNK_COUNT_X = 2;   // number of chunks in X
+const CHUNK_COUNT_Z = 2;   // number of chunks in Z
+const MAX_HEIGHT = 4;      // Y levels per column (keeps triangles reasonable)
+const BLOCK_SIZE = 1;      // world unit per block
+const TEXTURE_SIZE = 16;   // expected pixel size of textures (16x16)
+const FOV = 60 * Math.PI/180;
+const NEAR = 0.1;
+const FAR = 1000;
 
-const WIDTH = canvas.width;
-const HEIGHT = canvas.height;
+/* ============================
+   SETUP CANVAS & BUFFERS
+   ============================ */
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d', {alpha:false});
+function resize(){
+  canvas.width = Math.min(window.innerWidth, 1280); // limit to keep CPU sane
+  canvas.height = Math.min(window.innerHeight, 800);
+  imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+  colorBuffer = imageData.data; // Uint8ClampedArray
+  depthBuffer = new Float32Array(canvas.width * canvas.height);
+}
+window.addEventListener('resize', resize);
+resize();
 
-const deg = a => a * Math.PI / 180;
-
-// Camera
-let cam = { x: 2, y: 1.5, z: 5 };
-let yaw = 0;
-let pitch = 0;
-
-// Controls
-const keys = {};
-window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
-window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
-
-document.addEventListener("mousemove", e => {
-  if (document.pointerLockElement === canvas) {
-    yaw -= e.movementX * 0.002;
-    pitch -= e.movementY * 0.002;
-    pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+/* ============================
+   Math utilities (vec4, mat4)
+   We'll implement the minimal matrix ops efficiently.
+   ============================ */
+function mat4_identity() {
+  const m = new Float32Array(16);
+  m[0]=1;m[5]=1;m[10]=1;m[15]=1;
+  return m;
+}
+function mat4_mul(a,b){ // c = a * b
+  const c = new Float32Array(16);
+  for(let i=0;i<4;i++){
+    const ai0 = a[i], ai1 = a[i+4], ai2 = a[i+8], ai3 = a[i+12];
+    c[i]    = ai0*b[0]  + ai1*b[1]  + ai2*b[2]  + ai3*b[3];
+    c[i+4]  = ai0*b[4]  + ai1*b[5]  + ai2*b[6]  + ai3*b[7];
+    c[i+8]  = ai0*b[8]  + ai1*b[9]  + ai2*b[10] + ai3*b[11];
+    c[i+12] = ai0*b[12] + ai1*b[13] + ai2*b[14] + ai3*b[15];
   }
-});
-canvas.addEventListener("click", () => canvas.requestPointerLock());
+  return c;
+}
+function mat4_translate(tx,ty,tz){
+  const m = mat4_identity();
+  m[12]=tx; m[13]=ty; m[14]=tz;
+  return m;
+}
+function mat4_fromAxes(rx,ry,rz, ux,uy,uz, fx,fy,fz){ // create mat4 from right, up, forward (column-major)
+  const m = new Float32Array(16);
+  m[0]=rx; m[1]=ux; m[2]=fx; m[3]=0;
+  m[4]=ry; m[5]=uy; m[6]=fy; m[7]=0;
+  m[8]=rz; m[9]=uz; m[10]=fz; m[11]=0;
+  m[12]=0; m[13]=0; m[14]=0; m[15]=1;
+  return m;
+}
+function mat4_lookAt(eye, center, up){
+  // compute forward (z), right (x), up (y) for camera
+  const fx = center[0]-eye[0], fy = center[1]-eye[1], fz = center[2]-eye[2];
+  let rlf = 1/Math.hypot(fx,fy,fz);
+  const f0 = fx*rlf, f1 = fy*rlf, f2 = fz*rlf;
+  // s = f x up
+  const sx = f1*up[2] - f2*up[1];
+  const sy = f2*up[0] - f0*up[2];
+  const sz = f0*up[1] - f1*up[0];
+  let rls = 1/Math.hypot(sx,sy,sz);
+  const s0 = sx*rls, s1 = sy*rls, s2 = sz*rls;
+  // u = s x f
+  const u0 = s1*f2 - s2*f1;
+  const u1 = s2*f0 - s0*f2;
+  const u2 = s0*f1 - s1*f0;
+  // build view matrix (column-major) and then apply translation
+  const m = new Float32Array(16);
+  m[0]=s0; m[1]=u0; m[2]=-f0; m[3]=0;
+  m[4]=s1; m[5]=u1; m[6]=-f1; m[7]=0;
+  m[8]=s2; m[9]=u2; m[10]=-f2; m[11]=0;
+  m[12]=-(s0*eye[0] + s1*eye[1] + s2*eye[2]);
+  m[13]=-(u0*eye[0] + u1*eye[1] + u2*eye[2]);
+  m[14]= (f0*eye[0] + f1*eye[1] + f2*eye[2]);
+  m[15]=1;
+  return m;
+}
+function mat4_perspective(fov, aspect, near, far){
+  const f = 1/Math.tan(fov/2);
+  const m = new Float32Array(16);
+  m[0]=f/aspect; m[1]=0; m[2]=0; m[3]=0;
+  m[4]=0; m[5]=f; m[6]=0; m[7]=0;
+  m[8]=0; m[9]=0; m[10]=(far+near)/(near-far); m[11]=-1;
+  m[12]=0; m[13]=0; m[14]=(2*far*near)/(near-far); m[15]=0;
+  return m;
+}
 
-// Load textures
-const tex = {
-  top: new Image(),
-  bottom: new Image(),
-  side: new Image()
+/* ============================
+   Camera (yaw/pitch + position)
+   ============================ */
+const camera = {
+  pos: [CHUNK_SIZE*CHUNK_COUNT_X/2, 2.2, CHUNK_SIZE*CHUNK_COUNT_Z + 4],
+  yaw: Math.PI,  // face back to center
+  pitch: 0,
+  speed: 0.14
 };
-tex.top.src = "assets/top.jpeg";
-tex.bottom.src = "assets/bottom.jpeg";
-tex.side.src = "assets/side.jpeg";
 
-// Cube model (unit cube)
-const cubeVerts = [
-  [0,0,0],[1,0,0],[1,0,1],[0,0,1], // bottom
-  [0,1,0],[1,1,0],[1,1,1],[0,1,1]  // top
-];
+/* ============================
+   Input (pointer lock + WASD)
+   ============================ */
+let pointerLock = false;
+canvas.onclick = ()=> canvas.requestPointerLock();
+document.addEventListener('pointerlockchange', ()=> pointerLock = (document.pointerLockElement === canvas));
+const keys = {};
+document.addEventListener('keydown', e=> keys[e.key.toLowerCase()] = true);
+document.addEventListener('keyup', e=> keys[e.key.toLowerCase()] = false);
+document.addEventListener('mousemove', (e)=>{
+  if(!pointerLock) return;
+  camera.yaw -= e.movementX * 0.0025;
+  camera.pitch -= e.movementY * 0.0025;
+  const limit = Math.PI/2 - 0.01;
+  if(camera.pitch > limit) camera.pitch = limit;
+  if(camera.pitch < -limit) camera.pitch = -limit;
+});
 
-// Each face: vertices + texture
-const faces = [
-  {v:[4,5,6,7], img:"top"},    // top
-  {v:[0,1,2,3], img:"bottom"}, // bottom
-  {v:[3,2,6,7], img:"side"},   // front
-  {v:[0,1,5,4], img:"side"},   // back
-  {v:[1,2,6,5], img:"side"},   // right
-  {v:[0,3,7,4], img:"side"}    // left
-];
+/* ============================
+   TEXTURES: load and sample into arrays
+   ============================ */
+const textures = {};
+function loadTexture(name, src, cb){
+  const img = new Image();
+  img.src = src;
+  img.onload = ()=>{
+    // create an offscreen canvas to read pixels
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const g = c.getContext('2d');
+    g.drawImage(img,0,0);
+    const d = g.getImageData(0,0,c.width,c.height).data;
+    textures[name] = {w:c.width, h:c.height, data: d};
+    cb && cb();
+  };
+  img.onerror = ()=> { console.error('Texture load fail', src); cb && cb(); }
+}
+let texturesLoaded = 0;
+const texNames = [['top','assets/top.jpg'], ['bottom','assets/bottom.jpg'], ['side','assets/side.jpg']];
+function onTexLoaded(){ texturesLoaded++; startIfReady(); }
+for(const t of texNames) loadTexture(t[0], t[1], onTexLoaded);
 
-// Simple world (3x3 dirt platform)
-const world = [];
-for (let x=0; x<3; x++) for (let z=0; z<3; z++) world.push({x,y:0,z});
-
-// Projection
-function project(x, y, z) {
-  // Translate relative to camera
-  let dx = x - cam.x;
-  let dy = y - cam.y;
-  let dz = z - cam.z;
-
-  // Rotate by yaw
-  const cosy = Math.cos(yaw), siny = Math.sin(yaw);
-  const dxz = dx * cosy - dz * siny;
-  const dzx = dx * siny + dz * cosy;
-
-  // Rotate by pitch
-  const cosp = Math.cos(pitch), sinp = Math.sin(pitch);
-  const dyz = dy * cosp - dzx * sinp;
-  const dzz = dy * sinp + dzx * cosp;
-
-  const fov = 500;
-  const sx = (dxz * fov / dzz) + WIDTH / 2;
-  const sy = (-dyz * fov / dzz) + HEIGHT / 2;
-  return {x: sx, y: sy, z: dzz};
+/* ============================
+   World & Mesh generation (greedy-ish face culling)
+   We'll create CHUNK_COUNT_X × CHUNK_COUNT_Z chunks, each CHUNK_SIZE² columns,
+   with heights from a simple function. Each exposed face generates two triangles.
+   The mesh for each chunk is precomputed into an array of triangles with:
+     [x0,y0,z0, u0,v0, x1,y1,z1,u1,v1, x2,y2,z2,u2,v2, textureName]
+   ============================ */
+const chunks = []; // store chunk objects {cx,cz, triangles: Float32Array-ish}
+function heightFunc(x,z){
+  // quick procedural hills (cheap)
+  const h = Math.floor(1 + 2 * (0.5 + 0.5*Math.sin(x*0.3)*Math.cos(z*0.25)));
+  return Math.min(MAX_HEIGHT, Math.max(1,h));
 }
 
-function updateCamera() {
-  const speed = 0.1;
-  const forward = { x: Math.sin(yaw), z: Math.cos(yaw) };
-  const right = { x: Math.cos(yaw), z: -Math.sin(yaw) };
-  if (keys['w']) { cam.x += forward.x*speed; cam.z += forward.z*speed; }
-  if (keys['s']) { cam.x -= forward.x*speed; cam.z -= forward.z*speed; }
-  if (keys['a']) { cam.x += right.x*speed; cam.z += right.z*speed; }
-  if (keys['d']) { cam.x -= right.x*speed; cam.z -= right.z*speed; }
-  if (keys[' ']) cam.y += speed;
-  if (keys['shift']) cam.y -= speed;
-}
-
-function drawFace(face, block) {
-  const verts = face.v.map(i=>{
-    const v = cubeVerts[i];
-    return project(v[0]+block.x, v[1]+block.y, v[2]+block.z);
-  });
-
-  // Backface culling (only draw if facing camera)
-  const ax = verts[1].x - verts[0].x;
-  const ay = verts[1].y - verts[0].y;
-  const bx = verts[2].x - verts[0].x;
-  const by = verts[2].y - verts[0].y;
-  const cross = ax*by - ay*bx;
-  if (cross < 0) return; // facing away
-
-  // Draw texture as simple quad
-  const minX = Math.min(...verts.map(v=>v.x));
-  const maxX = Math.max(...verts.map(v=>v.x));
-  const minY = Math.min(...verts.map(v=>v.y));
-  const maxY = Math.max(...verts.map(v=>v.y));
-  const w = maxX - minX, h = maxY - minY;
-  const img = tex[face.img];
-  if (img.complete) ctx.drawImage(img, minX, minY, w, h);
-}
-
-function loop() {
-  ctx.clearRect(0,0,WIDTH,HEIGHT);
-  updateCamera();
-
-  // Collect visible faces and sort by distance
-  const drawList = [];
-  for (let block of world) {
-    for (let f of faces) {
-      const center = project(block.x+0.5, block.y+0.5, block.z+0.5);
-      if (center.z > 0) drawList.push({block, face:f, dist:center.z});
+function generateWorld(){
+  for(let cx=0; cx<CHUNK_COUNT_X; cx++){
+    for(let cz=0; cz<CHUNK_COUNT_Z; cz++){
+      const blocks = new Uint8Array(CHUNK_SIZE*CHUNK_SIZE*MAX_HEIGHT); // 1 if present
+      for(let x=0;x<CHUNK_SIZE;x++){
+        for(let z=0;z<CHUNK_SIZE;z++){
+          const h = heightFunc(cx*CHUNK_SIZE + x, cz*CHUNK_SIZE + z);
+          for(let y=0;y<h;y++){
+            blocks[(y*CHUNK_SIZE + z)*CHUNK_SIZE + x] = 1;
+          }
+        }
+      }
+      chunks.push({cx, cz, blocks});
     }
   }
-  drawList.sort((a,b)=>b.dist-a.dist);
-
-  for (let item of drawList) drawFace(item.face, item.block);
-
-  requestAnimationFrame(loop);
+  buildMeshes();
 }
-loop();
+
+function blockAt(chunk, bx, by, bz){
+  if(bx<0||bx>=CHUNK_SIZE||bz<0||bz>=CHUNK_SIZE||by<0||by>=MAX_HEIGHT) return 0;
+  return chunk.blocks[(by*CHUNK_SIZE + bz)*CHUNK_SIZE + bx];
+}
+
+function isNeighborPresent(worldX, worldY, worldZ){
+  // Find which chunk the neighbor is in
+  const cx = Math.floor(worldX / CHUNK_SIZE);
+  const cz = Math.floor(worldZ / CHUNK_SIZE);
+  if(cx<0 || cz<0 || cx>=CHUNK_COUNT_X || cz>=CHUNK_COUNT_Z) return false; // empty outside world
+  const chunkIndex = cx * CHUNK_COUNT_Z + cz;
+  const chunk = chunks[chunkIndex];
+  const bx = worldX - cx*CHUNK_SIZE;
+  const bz = worldZ - cz*CHUNK_SIZE;
+  return !!blockAt(chunk, bx, worldY, bz);
+}
+
+function buildMeshes(){
+  // vertex ordering and UVs per face (each face --> two triangles)
+  // We map UVs such that each face uses full texture [0,0]..[1,1]
+  const faceTemplates = [
+    // top (y+)
+    {verts:[[0,1,0],[1,1,0],[1,1,1],[0,1,1]], tex:'top'},
+    // bottom
+    {verts:[[0,0,0],[0,0,1],[1,0,1],[1,0,0]], tex:'bottom'},
+    // front (z+)
+    {verts:[[0,0,1],[1,0,1],[1,1,1],[0,1,1]], tex:'side'},
+    // back (z-)
+    {verts:[[1,0,0],[0,0,0],[0,1,0],[1,1,0]], tex:'side'},
+    // right (x+)
+    {verts:[[1,0,1],[1,0,0],[1,1,0],[1,1,1]], tex:'side'},
+    // left (x-)
+    {verts:[[0,0,0],[0,0,1],[0,1,1],[0,1,0]], tex:'side'}
+  ];
+
+  // For each chunk produce triangles
+  for(const chunk of chunks){
+    const triList = []; // will store arrays: [x,y,z,u,v, ...] per triangle plus texture name
+    const worldBaseX = chunk.cx * CHUNK_SIZE;
+    const worldBaseZ = chunk.cz * CHUNK_SIZE;
+    for(let bx=0; bx<CHUNK_SIZE; bx++){
+      for(let bz=0; bz<CHUNK_SIZE; bz++){
+        for(let by=0; by<MAX_HEIGHT; by++){
+          if(!blockAt(chunk,bx,by,bz)) continue;
+          const wx = worldBaseX + bx;
+          const wz = worldBaseZ + bz;
+          const wy = by;
+          // for six faces: if neighbor absent -> emit face
+          const neighborDirs = [[0,1,0],[0,-1,0],[0,0,1],[0,0,-1],[1,0,0],[-1,0,0]];
+          for(let f=0; f<6; f++){
+            const nd = neighborDirs[f];
+            if(isNeighborPresent(wx+nd[0], wy+nd[1], wz+nd[2])) continue;
+            const tpl = faceTemplates[f];
+            // two triangles: [0,1,2] and [0,2,3] in quad order
+            const quad = tpl.verts;
+            // uv mapping per vertex (u,v)
+            const uvs = [[0,0],[1,0],[1,1],[0,1]];
+            // tri A
+            triList.push([
+              wx+quad[0][0], wy+quad[0][1], wz+quad[0][2], uvs[0][0], uvs[0][1],
+              wx+quad[1][0], wy+quad[1][1], wz+quad[1][2], uvs[1][0], uvs[1][1],
+              wx+quad[2][0], wy+quad[2][1], wz+quad[2][2], uvs[2][0], uvs[2][1],
+              tpl.tex
+            ]);
+            // tri B
+            triList.push([
+              wx+quad[0][0], wy+quad[0][1], wz+quad[0][2], uvs[0][0], uvs[0][1],
+              wx+quad[2][0], wy+quad[2][1], wz+quad[2][2], uvs[2][0], uvs[2][1],
+              wx+quad[3][0], wy+quad[3][1], wz+quad[3][2], uvs[3][0], uvs[3][1],
+              tpl.tex
+            ]);
+          }
+        }
+      }
+    }
+    chunk.triangles = triList; // array of triangles (plain JS arrays)
+  }
+}
+
+/* ============================
+   Rasterizer: transforms and draws triangles into colorBuffer (ImageData)
+   We'll implement:
+     - Transform vertex by MVP (4x4)
+     - Perspective divide to screen coords
+     - Triangle bounding box
+     - Edge functions / barycentric
+     - Perspective-correct interpolation for UVs and 1/z
+     - Z-buffer test
+     - Sample texture from preloaded textures (nearest sample to keep fast)
+   ============================ */
+
+// MVP will be computed per-frame: P * V * M (M is identity for pre-transformed world coords)
+let imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+let colorBuffer = imageData.data;
+let depthBuffer = new Float32Array(canvas.width * canvas.height);
+
+// helper: clear buffers
+function clearBuffers(){
+  // clear color to sky (fill imageData quickly)
+  const skyR = 135, skyG = 206, skyB = 235;
+  const buf = colorBuffer;
+  for(let i=0;i<buf.length;i+=4){
+    buf[i] = skyR; buf[i+1]=skyG; buf[i+2]=skyB; buf[i+3]=255;
+  }
+  depthBuffer.fill(Infinity);
+}
+
+// Transform a 3D point by a 4x4 matrix, return clip-space vec (x,y,z,w)
+function transformPoint(m, x,y,z){
+  const cx = m[0]*x + m[4]*y + m[8]*z + m[12];
+  const cy = m[1]*x + m[5]*y + m[9]*z + m[13];
+  const cz = m[2]*x + m[6]*y + m[10]*z + m[14];
+  const cw = m[3]*x + m[7]*y + m[11]*z + m[15];
+  return [cx,cy,cz,cw];
+}
+
+// draw all chunks
+function renderScene(){
+  clearBuffers();
+  const aspect = canvas.width / canvas.height;
+  const proj = mat4_perspective(FOV, aspect, NEAR, FAR);
+  // build view matrix using camera yaw/pitch and position
+  const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  // compute forward vector from yaw/pitch
+  const fx = Math.sin(camera.yaw)*Math.cos(camera.pitch);
+  const fy = Math.sin(camera.pitch);
+  const fz = Math.cos(camera.yaw)*Math.cos(camera.pitch);
+  const eye = camera.pos;
+  const center = [eye[0]+fx, eye[1]+fy, eye[2]+fz];
+  const up = [0,1,0];
+  const view = mat4_lookAt(eye, center, up);
+  const viewProj = mat4_mul(proj, view);
+
+  // For each chunk, for each triangle, transform vertices then rasterize
+  for(const chunk of chunks){
+    // triangles stored as arrays; iterate
+    const tris = chunk.triangles;
+    for(let t=0;t<tris.length;t++){
+      const tri = tris[t];
+      // tri layout: [x0,y0,z0,u0,v0, x1,y1,z1,u1,v1, x2,y2,z2,u2,v2, texName]
+      const texName = tri[17];
+      const tex = textures[texName];
+      if(!tex) continue; // texture not loaded yet
+      // transform 3 verts
+      const v0 = transformPoint(viewProj, tri[0], tri[1], tri[2]);
+      const v1 = transformPoint(viewProj, tri[5], tri[6], tri[7]);
+      const v2 = transformPoint(viewProj, tri[10], tri[11], tri[12]);
+      // perspective divide check (w)
+      if(v0[3] === 0 || v1[3] === 0 || v2[3] === 0) continue;
+      const ndc0x = v0[0]/v0[3], ndc0y = v0[1]/v0[3], ndc0z = v0[2]/v0[3];
+      const ndc1x = v1[0]/v1[3], ndc1y = v1[1]/v1[3], ndc1z = v1[2]/v1[3];
+      const ndc2x = v2[0]/v2[3], ndc2y = v2[1]/v2[3], ndc2z = v2[2]/v2[3];
+      // screen coords
+      const sx0 = (ndc0x * 0.5 + 0.5) * canvas.width;
+      const sy0 = ( -ndc0y * 0.5 + 0.5) * canvas.height;
+      const sx1 = (ndc1x * 0.5 + 0.5) * canvas.width;
+      const sy1 = ( -ndc1y * 0.5 + 0.5) * canvas.height;
+      const sx2 = (ndc2x * 0.5 + 0.5) * canvas.width;
+      const sy2 = ( -ndc2y * 0.5 + 0.5) * canvas.height;
+
+      // Cull triangles facing away using screen-space cross
+      const ax = sx1 - sx0, ay = sy1 - sy0;
+      const bx = sx2 - sx0, by = sy2 - sy0;
+      if((ax*by - ay*bx) <= 0) continue;
+
+      // Bounding box
+      let minX = Math.max(0, Math.floor(Math.min(sx0, sx1, sx2)));
+      let maxX = Math.min(canvas.width-1, Math.ceil(Math.max(sx0, sx1, sx2)));
+      let minY = Math.max(0, Math.floor(Math.min(sy0, sy1, sy2)));
+      let maxY = Math.min(canvas.height-1, Math.ceil(Math.max(sy0, sy1, sy2)));
+      if(maxX < 0 || maxY < 0 || minX >= canvas.width || minY >= canvas.height) continue;
+
+      // Precompute values for barycentric using edge functions
+      const denom = ( (sy1 - sy2)*(sx0 - sx2) + (sx2 - sx1)*(sy0 - sy2) );
+      if(denom === 0) continue;
+      const invDen = 1/denom;
+
+      // For perspective-correct interpolation we need 1/w and u/w and v/w
+      const w0 = v0[3], w1 = v1[3], w2 = v2[3];
+      const iw0 = 1/w0, iw1 = 1/w1, iw2 = 1/w2;
+      const u0 = tri[3], v0t = tri[4];
+      const u1 = tri[8], v1t = tri[9];
+      const u2 = tri[13], v2t = tri[14];
+      const u0pw = u0 * iw0, v0pw = v0t * iw0;
+      const u1pw = u1 * iw1, v1pw = v1t * iw1;
+      const u2pw = u2 * iw2, v2pw = v2t * iw2;
+      const z0 = ndc0z, z1 = ndc1z, z2 = ndc2z;
+
+      // texture sampling
+      const tw = tex.w, th = tex.h, tdata = tex.data;
+
+      // raster inner loops
+      const rowStride = canvas.width;
+      for(let py = minY; py <= maxY; py++){
+        for(let px = minX; px <= maxX; px++){
+          // compute barycentric coordinates alpha,beta,gamma for px+0.5,py+0.5
+          const rx = px + 0.5, ry = py + 0.5;
+          const l1 = ( (sy1 - sy2)*(rx - sx2) + (sx2 - sx1)*(ry - sy2) ) * invDen; // alpha
+          const l2 = ( (sy2 - sy0)*(rx - sx2) + (sx0 - sx2)*(ry - sy2) ) * invDen; // beta
+          const l3 = 1 - l1 - l2;
+          if(l1 < 0 || l2 < 0 || l3 < 0) continue;
+
+          // perspective-correct interpolation of 1/w
+          const iw = l1*iw0 + l2*iw1 + l3*iw2;
+          const invw = 1/iw;
+          // interpolate depth (use ndc z) — for correct depth compare, use eye-space z (we used ndc z)
+          const depth = (l1*z0*iw0 + l2*z1*iw1 + l3*z2*iw2) * invw;
+          const idx = py * rowStride + px;
+          if(depth >= depthBuffer[idx]) continue; // further away (remember NDC z increases towards camera? we used standard projection; smaller => nearer)
+          // perspective-correct UV
+          const u = (l1*u0pw + l2*u1pw + l3*u2pw) * invw;
+          const v = (l1*v0pw + l2*v1pw + l3*v2pw) * invw;
+          // sample texture (nearest)
+          const tx = Math.min(tw-1, Math.max(0, Math.floor(u * (tw-1))));
+          const ty = Math.min(th-1, Math.max(0, Math.floor(v * (th-1))));
+          const tIndex = (ty*tw + tx) * 4;
+          const r = tdata[tIndex], g = tdata[tIndex+1], b = tdata[tIndex+2], a = tdata[tIndex+3];
+          // write color (fully opaque textures expected)
+          const bufIndex = idx * 4;
+          colorBuffer[bufIndex] = r;
+          colorBuffer[bufIndex+1] = g;
+          colorBuffer[bufIndex+2] = b;
+          colorBuffer[bufIndex+3] = a;
+          depthBuffer[idx] = depth;
+        }
+      } // raster box
+    } // tri loop
+  } // chunk loop
+
+  ctx.putImageData(imageData, 0, 0);
+}
+
+/* ============================
+   Camera movement update
+   ============================ */
+function updateCamera(delta){
+  const sp = camera.speed * (delta/16); // frame-rate independent-ish
+  // compute forward and right vectors from yaw/pitch
+  const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  const cp = Math.cos(camera.pitch), spc = Math.sin(camera.pitch);
+  const forward = [ Math.sin(camera.yaw)*Math.cos(camera.pitch), Math.sin(camera.pitch), Math.cos(camera.yaw)*Math.cos(camera.pitch) ];
+  const right = [ Math.cos(camera.yaw), 0, -Math.sin(camera.yaw) ];
+  if(keys['w']){ camera.pos[0] += forward[0]*sp; camera.pos[1] += forward[1]*sp; camera.pos[2] += forward[2]*sp; }
+  if(keys['s']){ camera.pos[0] -= forward[0]*sp; camera.pos[1] -= forward[1]*sp; camera.pos[2] -= forward[2]*sp; }
+  if(keys['a']){ camera.pos[0] += right[0]*sp; camera.pos[2] += right[2]*sp; }
+  if(keys['d']){ camera.pos[0] -= right[0]*sp; camera.pos[2] -= right[2]*sp; }
+  if(keys[' ']) camera.pos[1] += sp; // up
+  if(keys['shift']) camera.pos[1] -= sp; // down
+}
+
+/* ============================
+   Main loop
+   ============================ */
+let lastT = performance.now();
+function frame(t){
+  const dt = t - lastT; lastT = t;
+  updateCamera(dt);
+  renderScene();
+  requestAnimationFrame(frame);
+}
+
+/* ============================
+   Boot sequence: wait for textures, then world, then start.
+   ============================ */
+function startIfReady(){
+  if(texturesLoaded < texNames.length) return;
+  generateWorld();
+  requestAnimationFrame(frame);
+}
+startIfReady();
+
 </script>
 </body>
 </html>
