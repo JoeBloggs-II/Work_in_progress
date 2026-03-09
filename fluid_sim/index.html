@@ -2,111 +2,87 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>WebGL Fluid + Floating Ball</title>
+<title>Fluid Simulation</title>
 <style>
-html,body{
-    margin:0;
-    overflow:hidden;
-    background:#000;
-}
-canvas{
-    display:block;
-}
+body {margin:0;overflow:hidden;background:black;}
+canvas {display:block;}
 </style>
 </head>
-
 <body>
+
 <canvas id="c"></canvas>
 
 <script>
+
 const canvas = document.getElementById("c");
 const gl = canvas.getContext("webgl");
 
-canvas.width = innerWidth;
-canvas.height = innerHeight;
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-gl.getExtension("OES_texture_float");
+if(!gl){
+    alert("WebGL not supported");
+}
 
-function shader(type, src){
+function compile(type,source){
     const s = gl.createShader(type);
-    gl.shaderSource(s,src);
+    gl.shaderSource(s,source);
     gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){
+        console.error(gl.getShaderInfoLog(s));
+    }
     return s;
 }
 
-function program(v,f){
+function createProgram(v,f){
     const p = gl.createProgram();
-    gl.attachShader(p,shader(gl.VERTEX_SHADER,v));
-    gl.attachShader(p,shader(gl.FRAGMENT_SHADER,f));
+    gl.attachShader(p,compile(gl.VERTEX_SHADER,v));
+    gl.attachShader(p,compile(gl.FRAGMENT_SHADER,f));
     gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS)){
+        console.error(gl.getProgramInfoLog(p));
+    }
     return p;
 }
 
 const vertex = `
-attribute vec2 p;
+attribute vec2 pos;
 varying vec2 uv;
+
 void main(){
-uv = p*0.5+0.5;
-gl_Position = vec4(p,0,1);
+    uv = pos*0.5+0.5;
+    gl_Position = vec4(pos,0,1);
 }
 `;
 
-const fluidFrag = `
-precision highp float;
+const fragment = `
+precision mediump float;
 
-uniform sampler2D velocity;
-uniform vec2 res;
+varying vec2 uv;
+
+uniform float time;
 uniform vec2 ball;
-uniform float ballRadius;
-
-varying vec2 uv;
 
 void main(){
 
-vec2 texel = 1.0/res;
+    float d = distance(uv,ball);
 
-vec2 v = texture2D(velocity,uv).xy;
+    float waves =
+        sin(uv.x*20.0 + time*2.0) +
+        sin(uv.y*25.0 + time*1.5);
 
-vec2 left  = texture2D(velocity,uv-vec2(texel.x,0)).xy;
-vec2 right = texture2D(velocity,uv+vec2(texel.x,0)).xy;
-vec2 up    = texture2D(velocity,uv+vec2(0,texel.y)).xy;
-vec2 down  = texture2D(velocity,uv-vec2(0,texel.y)).xy;
+    float ripple = sin(d*60.0 - time*6.0);
 
-vec2 lap = (left+right+up+down-4.0*v);
+    float height = waves*0.03 + ripple*0.05/(1.0+d*20.0);
 
-v += lap*0.25;
+    vec3 water = vec3(0.1,0.3,0.8) + height;
 
-float d = distance(uv,ball);
-
-if(d < ballRadius){
-    vec2 dir = normalize(uv-ball);
-    v += dir*0.02;
-}
-
-gl_FragColor = vec4(v,0.0,1.0);
+    gl_FragColor = vec4(water,1.0);
 }
 `;
 
-const renderFrag = `
-precision highp float;
-
-uniform sampler2D velocity;
-varying vec2 uv;
-
-void main(){
-
-vec2 v = texture2D(velocity,uv).xy;
-
-float h = length(v)*10.0;
-
-vec3 water = vec3(0.1,0.4,0.8)+h;
-
-gl_FragColor = vec4(water,1.0);
-}
-`;
-
-const simProg = program(vertex,fluidFrag);
-const drawProg = program(vertex,renderFrag);
+const prog = createProgram(vertex,fragment);
+gl.useProgram(prog);
 
 const quad = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER,quad);
@@ -117,94 +93,32 @@ gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([
 1,1
 ]),gl.STATIC_DRAW);
 
-function makeTex(){
-const t = gl.createTexture();
-gl.bindTexture(gl.TEXTURE_2D,t);
-gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,512,512,0,gl.RGBA,gl.FLOAT,null);
-gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
-gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-return t;
+const posLoc = gl.getAttribLocation(prog,"pos");
+gl.enableVertexAttribArray(posLoc);
+gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);
+
+let ball = {x:0.5,y:0.5};
+
+canvas.addEventListener("mousemove",e=>{
+    ball.x = e.clientX/canvas.width;
+    ball.y = 1-e.clientY/canvas.height;
+});
+
+function draw(t){
+
+    gl.viewport(0,0,canvas.width,canvas.height);
+
+    gl.uniform1f(gl.getUniformLocation(prog,"time"),t*0.001);
+    gl.uniform2f(gl.getUniformLocation(prog,"ball"),ball.x,ball.y);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+
+    requestAnimationFrame(draw);
 }
 
-function makeFBO(tex){
-const f = gl.createFramebuffer();
-gl.bindFramebuffer(gl.FRAMEBUFFER,f);
-gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
-return f;
-}
-
-const texA = makeTex();
-const texB = makeTex();
-
-const fboA = makeFBO(texA);
-const fboB = makeFBO(texB);
-
-let ball = {x:0.5,y:0.5,vx:0,vy:0};
-
-canvas.onmousemove = e=>{
-let nx = e.clientX/canvas.width;
-let ny = 1-e.clientY/canvas.height;
-
-ball.vx += (nx-ball.x)*0.05;
-ball.vy += (ny-ball.y)*0.05;
-};
-
-function step(){
-
-ball.vx *=0.95;
-ball.vy *=0.95;
-
-ball.x+=ball.vx;
-ball.y+=ball.vy;
-
-ball.x=Math.max(0,Math.min(1,ball.x));
-ball.y=Math.max(0,Math.min(1,ball.y));
-
-gl.useProgram(simProg);
-
-gl.bindFramebuffer(gl.FRAMEBUFFER,fboB);
-
-gl.bindBuffer(gl.ARRAY_BUFFER,quad);
-
-let loc = gl.getAttribLocation(simProg,"p");
-gl.enableVertexAttribArray(loc);
-gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
-
-gl.activeTexture(gl.TEXTURE0);
-gl.bindTexture(gl.TEXTURE_2D,texA);
-
-gl.uniform1i(gl.getUniformLocation(simProg,"velocity"),0);
-gl.uniform2f(gl.getUniformLocation(simProg,"res"),512,512);
-gl.uniform2f(gl.getUniformLocation(simProg,"ball"),ball.x,ball.y);
-gl.uniform1f(gl.getUniformLocation(simProg,"ballRadius"),0.05);
-
-gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-
-[texA,texB] = [texB,texA];
-[fboA,fboB] = [fboB,fboA];
-
-gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-
-gl.useProgram(drawProg);
-
-gl.bindBuffer(gl.ARRAY_BUFFER,quad);
-
-let loc2 = gl.getAttribLocation(drawProg,"p");
-gl.enableVertexAttribArray(loc2);
-gl.vertexAttribPointer(loc2,2,gl.FLOAT,false,0,0);
-
-gl.activeTexture(gl.TEXTURE0);
-gl.bindTexture(gl.TEXTURE_2D,texA);
-
-gl.uniform1i(gl.getUniformLocation(drawProg,"velocity"),0);
-
-gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-
-requestAnimationFrame(step);
-}
-
-step();
+requestAnimationFrame(draw);
 
 </script>
+
 </body>
 </html>
