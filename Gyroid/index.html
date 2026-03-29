@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Gyroid Marching Cubes</title>
+<style>
+body { margin: 0; background: black; }
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<script>
+// ====== BASIC SETUP ======
+const canvas = document.getElementById("c");
+const gl = canvas.getContext("webgl");
+
+canvas.width = innerWidth;
+canvas.height = innerHeight;
+gl.viewport(0, 0, canvas.width, canvas.height);
+
+// ====== SHADERS ======
+const vs = `
+attribute vec3 position;
+uniform mat4 mvp;
+void main() {
+    gl_Position = mvp * vec4(position, 1.0);
+}
+`;
+
+const fs = `
+precision mediump float;
+void main() {
+    gl_FragColor = vec4(0.2, 0.7, 1.0, 1.0);
+}
+`;
+
+function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+// ====== GYROID FUNCTION ======
+function gyroid(x, y, z) {
+    return Math.sin(x)*Math.cos(y) +
+           Math.sin(y)*Math.cos(z) +
+           Math.sin(z)*Math.cos(x);
+}
+
+// ====== GRID ======
+const SIZE = 20;
+const STEP = 0.3;
+
+// sample field
+let field = [];
+for (let x = 0; x < SIZE; x++) {
+    field[x] = [];
+    for (let y = 0; y < SIZE; y++) {
+        field[x][y] = [];
+        for (let z = 0; z < SIZE; z++) {
+            let px = (x - SIZE/2)*STEP;
+            let py = (y - SIZE/2)*STEP;
+            let pz = (z - SIZE/2)*STEP;
+            field[x][y][z] = gyroid(px, py, pz);
+        }
+    }
+}
+
+// ====== SIMPLE EDGE INTERPOLATION ======
+function lerp(a, b, t) {
+    return a + (b - a) * t;
+}
+
+function interp(p1, p2, v1, v2) {
+    let t = v1 / (v1 - v2);
+    return [
+        lerp(p1[0], p2[0], t),
+        lerp(p1[1], p2[1], t),
+        lerp(p1[2], p2[2], t)
+    ];
+}
+
+// ====== VERY SIMPLIFIED MARCHING ======
+// (Not full lookup table, but enough to produce surface)
+
+let vertices = [];
+
+function addTri(a,b,c) {
+    vertices.push(...a, ...b, ...c);
+}
+
+for (let x = 0; x < SIZE-1; x++) {
+for (let y = 0; y < SIZE-1; y++) {
+for (let z = 0; z < SIZE-1; z++) {
+
+    let p = [];
+    let v = [];
+
+    for (let dx=0; dx<=1; dx++)
+    for (let dy=0; dy<=1; dy++)
+    for (let dz=0; dz<=1; dz++) {
+        let px = x+dx, py=y+dy, pz=z+dz;
+        p.push([
+            (px - SIZE/2)*STEP,
+            (py - SIZE/2)*STEP,
+            (pz - SIZE/2)*STEP
+        ]);
+        v.push(field[px][py][pz]);
+    }
+
+    // simple threshold
+    let inside = v.map(val => val < 0);
+
+    // crude surface: connect edges where sign flips
+    for (let i = 0; i < 8; i++) {
+        for (let j = i+1; j < 8; j++) {
+            if (inside[i] !== inside[j]) {
+                let pt = interp(p[i], p[j], v[i], v[j]);
+                vertices.push(...pt);
+            }
+        }
+    }
+
+}}}
+
+// ====== BUFFER ======
+const buffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+
+const posLoc = gl.getAttribLocation(prog, "position");
+gl.enableVertexAttribArray(posLoc);
+gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+
+// ====== MATRIX ======
+function perspective(fov, aspect, near, far) {
+    let f = 1 / Math.tan(fov/2);
+    return [
+        f/aspect,0,0,0,
+        0,f,0,0,
+        0,0,(far+near)/(near-far),-1,
+        0,0,(2*far*near)/(near-far),0
+    ];
+}
+
+function rotationY(a) {
+    return [
+        Math.cos(a),0,Math.sin(a),0,
+        0,1,0,0,
+        -Math.sin(a),0,Math.cos(a),0,
+        0,0,0,1
+    ];
+}
+
+function translate(z) {
+    return [
+        1,0,0,0,
+        0,1,0,0,
+        0,0,1,0,
+        0,0,z,1
+    ];
+}
+
+// ====== RENDER LOOP ======
+let angle = 0;
+
+function draw() {
+    angle += 0.01;
+
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+
+    let proj = perspective(1.0, canvas.width/canvas.height, 0.1, 100);
+    let rot = rotationY(angle);
+    let trans = translate(-10);
+
+    let mvp = multiply(proj, multiply(trans, rot));
+
+    let loc = gl.getUniformLocation(prog, "mvp");
+    gl.uniformMatrix4fv(loc, false, new Float32Array(mvp));
+
+    gl.drawArrays(gl.POINTS, 0, vertices.length/3);
+
+    requestAnimationFrame(draw);
+}
+
+// ====== MATRIX MULT ======
+function multiply(a,b) {
+    let out = new Array(16).fill(0);
+    for (let r=0;r<4;r++)
+    for (let c=0;c<4;c++)
+    for (let k=0;k<4;k++)
+        out[r*4+c]+=a[r*4+k]*b[k*4+c];
+    return out;
+}
+
+draw();
+
+</script>
+</body>
+</html>
