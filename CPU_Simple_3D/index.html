@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>CPU 3D Engine - Upgraded</title>
+<title>CPU 3D Engine</title>
 <style>
   body { margin:0; background:black; overflow:hidden; color: white; font-family: sans-serif; }
   canvas { display:block; }
@@ -18,7 +18,6 @@ const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
 canvas.width = innerWidth;
 canvas.height = innerHeight;
-
 const W = canvas.width;
 const H = canvas.height;
 
@@ -49,14 +48,14 @@ function norm(v) {
 // ======================
 // Camera & Input
 // ======================
-let camPos = vec3(0, 0, -3); // Start slightly back
+let camPos = vec3(0, 0, -3);
 let camYaw = 0;
 let camPitch = 0;
 
 const keys = {};
 addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
 addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
-addEventListener("resize", () => location.reload()); // Reload on resize to reset buffers easily
+addEventListener("resize", () => location.reload()); 
 
 // ======================
 // Projection
@@ -69,7 +68,7 @@ function project(v) {
   return {
     x: (v.x * f / aspect) / v.z,
     y: (v.y * f) / v.z,
-    z: v.z // Preserve true Z for the depth buffer
+    z: v.z 
   };
 }
 
@@ -108,7 +107,6 @@ function edge(a, b, c) {
 }
 
 function drawTri(v0, v1, v2, brightness, colorHex) {
-  // Bounding Box
   let minX = Math.max(0, Math.floor(Math.min(v0.x, v1.x, v2.x)));
   let maxX = Math.min(W - 1, Math.ceil(Math.max(v0.x, v1.x, v2.x)));
   let minY = Math.max(0, Math.floor(Math.min(v0.y, v1.y, v2.y)));
@@ -121,12 +119,10 @@ function drawTri(v0, v1, v2, brightness, colorHex) {
   const invZ1 = 1 / v1.z;
   const invZ2 = 1 / v2.z;
 
-  // Basic color parsing (rgb)
   let rBase = (colorHex >> 16) & 255;
   let gBase = (colorHex >> 8) & 255;
   let bBase = colorHex & 255;
 
-  // Apply lighting
   let lightMult = Math.pow(brightness / (brightness + 1), 1 / 2.2);
   let r = Math.min(255, rBase * lightMult * 2);
   let g = Math.min(255, gBase * lightMult * 2);
@@ -141,14 +137,11 @@ function drawTri(v0, v1, v2, brightness, colorHex) {
       let w2 = edge(v0, v1, p) / area;
 
       if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
-        // Perspective correct Z interpolation
         let z = 1 / (invZ0 * w0 + invZ1 * w1 + invZ2 * w2);
         let i = x + y * W;
 
-        // Depth test (smaller Z is closer)
         if (z < depth[i]) {
           depth[i] = z;
-
           let idx = i * 4;
           img.data[idx] = r;
           img.data[idx + 1] = g;
@@ -161,21 +154,21 @@ function drawTri(v0, v1, v2, brightness, colorHex) {
 }
 
 // ======================
-// Transforms
+// Transforms (FIXED SIGNS)
 // ======================
 function rotateY(v, a) {
   return vec3(
-    v.x * Math.cos(a) - v.z * Math.sin(a),
+    v.x * Math.cos(a) + v.z * Math.sin(a),
     v.y,
-    v.x * Math.sin(a) + v.z * Math.cos(a)
+    -v.x * Math.sin(a) + v.z * Math.cos(a)
   );
 }
 
 function rotateX(v, a) {
   return vec3(
     v.x,
-    v.y * Math.cos(a) - v.z * Math.sin(a),
-    v.y * Math.sin(a) + v.z * Math.cos(a)
+    v.y * Math.cos(a) + v.z * Math.sin(a),
+    -v.y * Math.sin(a) + v.z * Math.cos(a)
   );
 }
 
@@ -186,16 +179,13 @@ const lightDir = norm(vec3(0.5, 1, -1));
 let lastTime = performance.now();
 
 function loop() {
-  // Delta Time setup
   let now = performance.now();
   let dt = (now - lastTime) / 1000;
   lastTime = now;
 
-  // Movement & Controls
   const speed = 5.0 * dt;
   const rotSpeed = 2.0 * dt;
 
-  // FPS-style movement (Locked to XZ plane)
   let moveX = 0;
   let moveZ = 0;
 
@@ -204,47 +194,37 @@ function loop() {
   if (keys["a"]) moveX -= 1;
   if (keys["d"]) moveX += 1;
 
-  // Calculate forward and right vectors based ONLY on Yaw
   let forward = vec3(Math.sin(camYaw), 0, Math.cos(camYaw));
   let right = vec3(Math.cos(camYaw), 0, -Math.sin(camYaw));
 
-  // Apply movement
   camPos.x += (forward.x * moveZ + right.x * moveX) * speed;
   camPos.z += (forward.z * moveZ + right.z * moveX) * speed;
 
-  // Vertical movement
   if (keys["q"]) camPos.y += speed;
   if (keys["e"]) camPos.y -= speed;
 
-  // Camera Rotation
+  // FIXED: Controls map intuitively to the rotation angles now
   if (keys["arrowleft"]) camYaw -= rotSpeed;
   if (keys["arrowright"]) camYaw += rotSpeed;
-  if (keys["arrowup"]) camPitch -= rotSpeed;
-  if (keys["arrowdown"]) camPitch += rotSpeed;
+  if (keys["arrowup"]) camPitch += rotSpeed;
+  if (keys["arrowdown"]) camPitch -= rotSpeed;
 
-  // Clamp pitch so you don't flip upside down
   camPitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, camPitch));
 
-  // Clear buffers
   img.data.fill(0);
-  depth.fill(Infinity); // FIXED: Infinity for proper Z-buffering
+  depth.fill(Infinity); 
 
-  // Let's draw two cubes to make movement obvious
   let objects = [
-    { pos: vec3(0, 0, 5), color: 0xaa4444 },   // Red cube
-    { pos: vec3(4, 0, 8), color: 0x44aa44 }    // Green cube
+    { pos: vec3(0, 0, 5), color: 0xaa4444 },   
+    { pos: vec3(4, 0, 8), color: 0x44aa44 }    
   ];
 
   for (let obj of objects) {
     let transformed = verts.map(v => {
-      // 1. World Transform (Position the object)
       let r = add(v, obj.pos);
-
-      // 2. View Transform (Camera math)
       r = sub(r, camPos);
       r = rotateY(r, -camYaw);
       r = rotateX(r, -camPitch);
-
       return r;
     });
 
@@ -253,21 +233,17 @@ function loop() {
       let v1 = transformed[tri[1]];
       let v2 = transformed[tri[2]];
 
-      // Near-Plane Culling (Stops the cooked stretching when you walk into the cube)
-      if (v0.z < 0.1 || v1.z < 0.1 || v2.z < 0.1) continue;
+      // Adjusted near-plane tolerance so triangles don't aggressively disappear
+      if (v0.z < 0.01 || v1.z < 0.01 || v2.z < 0.01) continue;
 
-      // Face Normal
       let n = norm(cross(sub(v1, v0), sub(v2, v0)));
 
-      // Backface Culling (View direction is roughly -v0 in view space)
       if (dot(n, v0) >= 0) continue;
 
-      // Lighting
       let diffuse = Math.max(0, dot(n, lightDir));
       let ambient = 0.2;
       let brightness = ambient + diffuse * 0.8;
 
-      // Projection to 2D Screen
       let p0 = toScreen(project(v0));
       let p1 = toScreen(project(v1));
       let p2 = toScreen(project(v2));
