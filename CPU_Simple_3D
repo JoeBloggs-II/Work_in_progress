@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>CPU 3D Engine</title>
+<style>
+  body { margin:0; background:black; }
+  canvas { display:block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+canvas.width = innerWidth;
+canvas.height = innerHeight;
+
+const W = canvas.width;
+const H = canvas.height;
+
+// Framebuffer + Z-buffer
+let img = ctx.createImageData(W, H);
+let depth = new Float32Array(W * H);
+
+// ======================
+// Math
+// ======================
+function vec3(x,y,z){ return {x,y,z}; }
+
+function add(a,b){ return vec3(a.x+b.x,a.y+b.y,a.z+b.z); }
+function sub(a,b){ return vec3(a.x-b.x,a.y-b.y,a.z-b.z); }
+function dot(a,b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
+
+function cross(a,b){
+  return vec3(
+    a.y*b.z - a.z*b.y,
+    a.z*b.x - a.x*b.z,
+    a.x*b.y - a.y*b.x
+  );
+}
+
+function norm(v){
+  let l = Math.hypot(v.x,v.y,v.z);
+  return vec3(v.x/l,v.y/l,v.z/l);
+}
+
+// ======================
+// Camera + Projection
+// ======================
+const fov = 90;
+const near = 0.1;
+const far = 1000;
+const aspect = W/H;
+const f = 1 / Math.tan((fov/2)*Math.PI/180);
+
+function project(v){
+  // simple perspective projection
+  return {
+    x: (v.x * f / aspect) / v.z,
+    y: (v.y * f) / v.z,
+    z: v.z
+  };
+}
+
+function toScreen(v){
+  return {
+    x: (v.x + 1) * 0.5 * W,
+    y: (1 - (v.y + 1)*0.5) * H,
+    z: v.z
+  };
+}
+
+// ======================
+// Cube Geometry
+// ======================
+const verts = [
+  vec3(-1,-1,-1), vec3(1,-1,-1),
+  vec3(1,1,-1), vec3(-1,1,-1),
+  vec3(-1,-1,1), vec3(1,-1,1),
+  vec3(1,1,1), vec3(-1,1,1)
+];
+
+const tris = [
+  [0,1,2],[0,2,3],
+  [4,5,6],[4,6,7],
+  [0,1,5],[0,5,4],
+  [2,3,7],[2,7,6],
+  [1,2,6],[1,6,5],
+  [0,3,7],[0,7,4]
+];
+
+// ======================
+// Rasterizer
+// ======================
+function edge(a,b,c){
+  return (c.x-a.x)*(b.y-a.y) - (c.y-a.y)*(b.x-a.x);
+}
+
+function drawTri(v0,v1,v2, brightness){
+  let minX = Math.max(0, Math.floor(Math.min(v0.x,v1.x,v2.x)));
+  let maxX = Math.min(W-1, Math.ceil(Math.max(v0.x,v1.x,v2.x)));
+  let minY = Math.max(0, Math.floor(Math.min(v0.y,v1.y,v2.y)));
+  let maxY = Math.min(H-1, Math.ceil(Math.max(v0.y,v1.y,v2.y)));
+
+  let area = edge(v0,v1,v2);
+  if(area === 0) return;
+
+  for(let y=minY; y<=maxY; y++){
+    for(let x=minX; x<=maxX; x++){
+      let p = {x,y};
+
+      let w0 = edge(v1,v2,p);
+      let w1 = edge(v2,v0,p);
+      let w2 = edge(v0,v1,p);
+
+      if(w0>=0 && w1>=0 && w2>=0){
+        w0/=area; w1/=area; w2/=area;
+
+        let z = v0.z*w0 + v1.z*w1 + v2.z*w2;
+        let i = x + y*W;
+
+        if(z < depth[i]){
+          depth[i] = z;
+
+          let c = brightness*255;
+          let idx = i*4;
+          img.data[idx] = c;
+          img.data[idx+1] = c;
+          img.data[idx+2] = c;
+          img.data[idx+3] = 255;
+        }
+      }
+    }
+  }
+}
+
+// ======================
+// Transform
+// ======================
+function rotateY(v, a){
+  return vec3(
+    v.x*Math.cos(a) - v.z*Math.sin(a),
+    v.y,
+    v.x*Math.sin(a) + v.z*Math.cos(a)
+  );
+}
+
+function rotateX(v, a){
+  return vec3(
+    v.x,
+    v.y*Math.cos(a) - v.z*Math.sin(a),
+    v.y*Math.sin(a) + v.z*Math.cos(a)
+  );
+}
+
+// ======================
+// Lighting
+// ======================
+const lightDir = norm(vec3(1,1,-1));
+
+// ======================
+// Main Loop
+// ======================
+let t = 0;
+
+function loop(){
+  t += 0.01;
+
+  // clear
+  img.data.fill(0);
+  depth.fill(Infinity);
+
+  let transformed = verts.map(v=>{
+    let r = rotateY(v,t);
+    r = rotateX(r,t*0.7);
+    r.z += 5;
+    return r;
+  });
+
+  for(let tri of tris){
+    let v0 = transformed[tri[0]];
+    let v1 = transformed[tri[1]];
+    let v2 = transformed[tri[2]];
+
+    // normal
+    let n = norm(cross(sub(v1,v0), sub(v2,v0)));
+
+    // backface culling
+    if(n.z >= 0) continue;
+
+    // lighting
+    let brightness = Math.max(0.1, dot(n, lightDir));
+
+    // project
+    let p0 = toScreen(project(v0));
+    let p1 = toScreen(project(v1));
+    let p2 = toScreen(project(v2));
+
+    drawTri(p0,p1,p2, brightness);
+  }
+
+  ctx.putImageData(img,0,0);
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
