@@ -133,9 +133,9 @@ function drawTri(v0,v1,v2, brightness){
 
           let c = brightness*255;
           let idx = i*4;
-          img.data[idx] = c;
-          img.data[idx+1] = c;
-          img.data[idx+2] = c;
+          img.data[idx] = c*1.1;
+          img.data[idx+1] = c*0.5;
+          img.data[idx+2] = c*0.5;
           img.data[idx+3] = 255;
         }
       }
