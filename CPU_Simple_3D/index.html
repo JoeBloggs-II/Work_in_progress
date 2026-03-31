@@ -2,9 +2,9 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>CPU 3D Engine</title>
+<title>CPU 3D Engine - Camera</title>
 <style>
-  body { margin:0; background:black; }
+  body { margin:0; background:black; overflow:hidden; }
   canvas { display:block; }
 </style>
 </head>
@@ -13,13 +13,14 @@
 <script>
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
+
 canvas.width = innerWidth;
 canvas.height = innerHeight;
 
 const W = canvas.width;
 const H = canvas.height;
 
-// Framebuffer + Z-buffer
+// Buffers
 let img = ctx.createImageData(W, H);
 let depth = new Float32Array(W * H);
 
@@ -46,11 +47,20 @@ function norm(v){
 }
 
 // ======================
-// Camera + Projection
+// Camera
+// ======================
+let camPos = vec3(0, 0, 0);
+let camYaw = 0;
+let camPitch = 0;
+
+const keys = {};
+addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+// ======================
+// Projection
 // ======================
 const fov = 90;
-const near = 0.1;
-const far = 1000;
 const aspect = W/H;
 const f = 1 / Math.tan((fov/2)*Math.PI/180);
 
@@ -72,7 +82,7 @@ function toScreen(v){
 }
 
 // ======================
-// Cube Geometry
+// Cube
 // ======================
 const verts = [
   vec3(-1,-1,-1), vec3(1,-1,-1),
@@ -81,20 +91,13 @@ const verts = [
   vec3(1,1,1), vec3(-1,1,1)
 ];
 
-// FIXED: Adjusted winding order so all normals point outward
 const tris = [
-  // Front (Z = -1)
-  [0,3,2], [0,2,1],
-  // Back (Z = 1)
-  [4,5,6], [4,6,7],
-  // Bottom (Y = -1)
-  [0,1,5], [0,5,4],
-  // Top (Y = 1)
-  [2,3,7], [2,7,6],
-  // Right (X = 1)
-  [1,2,6], [1,6,5],
-  // Left (X = -1)
-  [0,4,7], [0,7,3]
+  [0,3,2],[0,2,1],
+  [4,5,6],[4,6,7],
+  [0,1,5],[0,5,4],
+  [2,3,7],[2,7,6],
+  [1,2,6],[1,6,5],
+  [0,4,7],[0,7,3]
 ];
 
 // ======================
@@ -113,6 +116,8 @@ function drawTri(v0,v1,v2, brightness){
   let area = edge(v0,v1,v2);
   if(area === 0) return;
 
+  const eps = -0.0001;
+
   for(let y=minY; y<=maxY; y++){
     for(let x=minX; x<=maxX; x++){
       let p = {x,y};
@@ -120,18 +125,23 @@ function drawTri(v0,v1,v2, brightness){
       let w0 = edge(v1,v2,p);
       let w1 = edge(v2,v0,p);
       let w2 = edge(v0,v1,p);
-      
-      if ((w0>=0 && w1>=0 && w2>=0) || (w0<=0 && w1<=0 && w2<=0)) {
+
+      if(
+        (w0>=eps && w1>=eps && w2>=eps) ||
+        (w0<=-eps && w1<=-eps && w2<=-eps)
+      ){
         w0/=area; w1/=area; w2/=area;
 
         let z = 1 / (v0.z*w0 + v1.z*w1 + v2.z*w2);
         let i = x + y*W;
 
-        // FIXED: Check against Infinity, ensure z > 0
-        if(z < depth[i] && z > 0){
+        if(z > depth[i]){
           depth[i] = z;
 
-          let c = brightness*255;
+          // tone + gamma
+          let b = brightness / (brightness + 1);
+          let c = Math.pow(b, 1/2.2) * 255;
+
           let idx = i*4;
           img.data[idx] = c;
           img.data[idx+1] = c;
@@ -144,7 +154,7 @@ function drawTri(v0,v1,v2, brightness){
 }
 
 // ======================
-// Transform
+// Rotation
 // ======================
 function rotateY(v, a){
   return vec3(
@@ -170,21 +180,54 @@ const lightDir = norm(vec3(1,1,-1));
 // ======================
 // Main Loop
 // ======================
-let t = 0;
-
 function loop(){
-  t += 0.01;
+  // movement
+  const speed = 0.08;
+  const rotSpeed = 0.03;
+
+  let forward = vec3(
+    Math.sin(camYaw) * Math.cos(camPitch),
+    Math.sin(camPitch),
+    Math.cos(camYaw) * Math.cos(camPitch)
+  );
+
+  let right = vec3(
+    Math.cos(camYaw),
+    0,
+    -Math.sin(camYaw)
+  );
+
+  if(keys["w"]) camPos = add(camPos, vec3(forward.x*speed, forward.y*speed, forward.z*speed));
+  if(keys["s"]) camPos = sub(camPos, vec3(forward.x*speed, forward.y*speed, forward.z*speed));
+  if(keys["a"]) camPos = sub(camPos, vec3(right.x*speed, 0, right.z*speed));
+  if(keys["d"]) camPos = add(camPos, vec3(right.x*speed, 0, right.z*speed));
+
+  if(keys["q"]) camPos.y -= speed;
+  if(keys["e"]) camPos.y += speed;
+
+  if(keys["arrowleft"]) camYaw -= rotSpeed;
+  if(keys["arrowright"]) camYaw += rotSpeed;
+  if(keys["arrowup"]) camPitch += rotSpeed;
+  if(keys["arrowdown"]) camPitch -= rotSpeed;
+
+  camPitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, camPitch));
 
   // clear
   img.data.fill(0);
-  
-  // FIXED: Clear Z-buffer with Infinity
-  depth.fill(Infinity);
+  depth.fill(-Infinity);
 
+  // transform vertices
   let transformed = verts.map(v=>{
-    let r = rotateY(v,t);
-    r = rotateX(r,t*0.7);
+    let r = vec3(v.x, v.y, v.z);
+
+    // push cube forward
     r.z += 5;
+
+    // camera transform
+    r = sub(r, camPos);
+    r = rotateY(r, -camYaw);
+    r = rotateX(r, -camPitch);
+
     return r;
   });
 
@@ -193,19 +236,16 @@ function loop(){
     let v1 = transformed[tri[1]];
     let v2 = transformed[tri[2]];
 
-    // normal
     let n = norm(cross(sub(v1,v0), sub(v2,v0)));
 
     // backface culling
-    let viewDir = norm(v0);
-    if(dot(n, viewDir) >= 0) continue;
+    if(dot(n, v0) >= 0) continue;
 
-    // FIXED: Ambient + Diffuse Lighting
+    // lighting
     let diffuse = Math.max(0, dot(n, lightDir));
-    let ambient = 0.15; 
-    let brightness = ambient + (diffuse * 0.85);
+    let ambient = 0.15;
+    let brightness = ambient + diffuse * 0.85;
 
-    // project
     let p0 = toScreen(project(v0));
     let p1 = toScreen(project(v1));
     let p2 = toScreen(project(v2));
