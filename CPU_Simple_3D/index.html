@@ -197,18 +197,18 @@ function loop(){
     -Math.sin(camYaw)
   );
 
-  if(keys["w"]) camPos = add(camPos, vec3(forward.x*speed, forward.y*speed, forward.z*speed));
-  if(keys["s"]) camPos = sub(camPos, vec3(forward.x*speed, forward.y*speed, forward.z*speed));
-  if(keys["a"]) camPos = sub(camPos, vec3(right.x*speed, 0, right.z*speed));
-  if(keys["d"]) camPos = add(camPos, vec3(right.x*speed, 0, right.z*speed));
+  if(keys["w"]) camPos = sub(camPos, vec3(forward.x*speed, forward.y*speed, forward.z*speed));
+  if(keys["s"]) camPos = add(camPos, vec3(forward.x*speed, forward.y*speed, forward.z*speed));
+  if(keys["a"]) camPos = add(camPos, vec3(right.x*speed, 0, right.z*speed));
+  if(keys["d"]) camPos = sub(camPos, vec3(right.x*speed, 0, right.z*speed));
 
-  if(keys["q"]) camPos.y -= speed;
-  if(keys["e"]) camPos.y += speed;
+  if(keys["q"]) camPos.y += speed;
+  if(keys["e"]) camPos.y -= speed;
 
-  if(keys["arrowleft"]) camYaw -= rotSpeed;
-  if(keys["arrowright"]) camYaw += rotSpeed;
-  if(keys["arrowup"]) camPitch += rotSpeed;
-  if(keys["arrowdown"]) camPitch -= rotSpeed;
+  if(keys["arrowleft"]) camYaw += rotSpeed;
+  if(keys["arrowright"]) camYaw -= rotSpeed;
+  if(keys["arrowup"]) camPitch -= rotSpeed;
+  if(keys["arrowdown"]) camPitch += rotSpeed;
 
   camPitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, camPitch));
 
