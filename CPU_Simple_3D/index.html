@@ -113,11 +113,11 @@ function drawTri(v0,v1,v2, brightness){
       let w0 = edge(v1,v2,p);
       let w1 = edge(v2,v0,p);
       let w2 = edge(v0,v1,p);
-
-      if(w0>=0 && w1>=0 && w2>=0){
+      
+      if ((w0>=0 && w1>=0 && w2>=0) || (w0<=0 && w1<=0 && w2<=0)) {
         w0/=area; w1/=area; w2/=area;
 
-        let z = v0.z*w0 + v1.z*w1 + v2.z*w2;
+        let z = 1 / (v0.z*w0 + v1.z*w1 + v2.z*w2);
         let i = x + y*W;
 
         if(z < depth[i]){
@@ -169,7 +169,7 @@ function loop(){
 
   // clear
   img.data.fill(0);
-  depth.fill(Infinity);
+  depth.fill(-Infinity);
 
   let transformed = verts.map(v=>{
     let r = rotateY(v,t);
