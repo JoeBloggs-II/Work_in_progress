@@ -205,6 +205,13 @@ function loop(){
   if(keys["arrowleft"])camYaw-=rot;
   if(keys["arrowright"])camYaw+=rot;
 
+  if(keys["arrowup"])camPitch += rot;
+  if(keys["arrowdown"])camPitch -= rot;
+
+  const maxPitch = Math.PI / 2 - 0.01;
+  if (camPitch > maxPitch) camPitch = maxPitch;
+  if (camPitch < -maxPitch) camPitch = -maxPitch;
+
   depth.fill(Infinity);
 
   // clear image (fast)
@@ -231,20 +238,28 @@ function loop(){
 
       const a=verts[t[0]];
       const b=verts[t[1]];
-      const c=verts[t[2]];
+      const c=verts[t[2]]
 
       function transform(v){
-        let x=v[0]+ox;
-        let y=v[1]+oy;
-        let z=v[2]+oz;
+        let x = v[0] + ox;
+        let y = v[1] + oy;
+        let z = v[2] + oz;
 
-        let tx=x*cosYc+z*sinYc;
-        let tz=-x*sinYc+z*cosYc;
+        // YAW (Y axis rotation)
+        let tx = x * cosYc + z * sinYc;
+        let tz = -x * sinYc + z * cosYc;
+
+        // PITCH (X axis rotation)
+        let cosP = Math.cos(camPitch);
+        let sinP = Math.sin(camPitch);
+
+        let ty = y * cosP - tz * sinP;
+        let tz2 = y * sinP + tz * cosP;
 
         return [
-          (tx*f/aspect)/tz,
-          (y*f)/tz,
-          tz
+          (tx * f / aspect) / tz2,
+          (ty * f) / tz2,
+          tz2
         ];
       }
 
