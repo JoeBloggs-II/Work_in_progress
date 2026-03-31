@@ -55,11 +55,11 @@ const aspect = W/H;
 const f = 1 / Math.tan((fov/2)*Math.PI/180);
 
 function project(v){
-  // simple perspective projection
+  let z = Math.max(v.z, 0.1);
   return {
-    x: (v.x * f / aspect) / v.z,
-    y: (v.y * f) / v.z,
-    z: v.z
+    x: (v.x * f / aspect) / z,
+    y: (v.y * f) / z,
+    z: z
   };
 }
 
@@ -187,7 +187,8 @@ function loop(){
     let n = norm(cross(sub(v1,v0), sub(v2,v0)));
 
     // backface culling
-    if(n.z >= 0) continue;
+    let viewDir = norm(v0);
+    if(dot(n, viewDir) >= 0) continue;
 
     // lighting
     let brightness = Math.max(0.1, dot(n, lightDir));
