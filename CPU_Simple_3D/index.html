@@ -2,17 +2,19 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>CPU 3D Engine</title>
+<title>CPU 3D Engine - Upgraded</title>
 <style>
-  body { margin:0; background:black; overflow:hidden; }
+  body { margin:0; background:black; overflow:hidden; color: white; font-family: sans-serif; }
   canvas { display:block; }
+  #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; }
 </style>
 </head>
 <body>
+<div id="ui">WASD to move | Q/E to fly up/down | Arrow Keys to look</div>
 <canvas id="c"></canvas>
 <script>
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
 canvas.width = innerWidth;
 canvas.height = innerHeight;
@@ -25,128 +27,133 @@ let img = ctx.createImageData(W, H);
 let depth = new Float32Array(W * H);
 
 // ======================
-// Math
+// Math Library
 // ======================
-function vec3(x,y,z){ return {x,y,z}; }
-
-function add(a,b){ return vec3(a.x+b.x,a.y+b.y,a.z+b.z); }
-function sub(a,b){ return vec3(a.x-b.x,a.y-b.y,a.z-b.z); }
-function dot(a,b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
-
-function cross(a,b){
+function vec3(x, y, z) { return { x, y, z }; }
+function add(a, b) { return vec3(a.x + b.x, a.y + b.y, a.z + b.z); }
+function sub(a, b) { return vec3(a.x - b.x, a.y - b.y, a.z - b.z); }
+function dot(a, b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+function cross(a, b) {
   return vec3(
-    a.y*b.z - a.z*b.y,
-    a.z*b.x - a.x*b.z,
-    a.x*b.y - a.y*b.x
+    a.y * b.z - a.z * b.y,
+    a.z * b.x - a.x * b.z,
+    a.x * b.y - a.y * b.x
   );
 }
-
-function norm(v){
-  let l = Math.hypot(v.x,v.y,v.z);
-  return vec3(v.x/l,v.y/l,v.z/l);
+function norm(v) {
+  let l = Math.hypot(v.x, v.y, v.z);
+  if (l === 0) return vec3(0,0,0);
+  return vec3(v.x / l, v.y / l, v.z / l);
 }
 
 // ======================
-// Camera
+// Camera & Input
 // ======================
-let camPos = vec3(0, 0, 0);
+let camPos = vec3(0, 0, -3); // Start slightly back
 let camYaw = 0;
 let camPitch = 0;
 
 const keys = {};
 addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
 addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+addEventListener("resize", () => location.reload()); // Reload on resize to reset buffers easily
 
 // ======================
 // Projection
 // ======================
 const fov = 90;
-const aspect = W/H;
-const f = 1 / Math.tan((fov/2)*Math.PI/180);
+const aspect = W / H;
+const f = 1 / Math.tan((fov / 2) * Math.PI / 180);
 
-function project(v){
-  let z = Math.max(v.z, 0.1);
+function project(v) {
   return {
-    x: (v.x * f / aspect) / z,
-    y: (v.y * f) / z,
-    z: z
+    x: (v.x * f / aspect) / v.z,
+    y: (v.y * f) / v.z,
+    z: v.z // Preserve true Z for the depth buffer
   };
 }
 
-function toScreen(v){
+function toScreen(v) {
   return {
     x: (v.x + 1) * 0.5 * W,
-    y: (1 - (v.y + 1)*0.5) * H,
+    y: (1 - (v.y + 1) * 0.5) * H,
     z: v.z
   };
 }
 
 // ======================
-// Cube
+// Geometry (Cube)
 // ======================
 const verts = [
-  vec3(-1,-1,-1), vec3(1,-1,-1),
-  vec3(1,1,-1), vec3(-1,1,-1),
-  vec3(-1,-1,1), vec3(1,-1,1),
-  vec3(1,1,1), vec3(-1,1,1)
+  vec3(-1, -1, -1), vec3(1, -1, -1),
+  vec3(1, 1, -1), vec3(-1, 1, -1),
+  vec3(-1, -1, 1), vec3(1, -1, 1),
+  vec3(1, 1, 1), vec3(-1, 1, 1)
 ];
 
 const tris = [
-  [0,3,2],[0,2,1],
-  [4,5,6],[4,6,7],
-  [0,1,5],[0,5,4],
-  [2,3,7],[2,7,6],
-  [1,2,6],[1,6,5],
-  [0,4,7],[0,7,3]
+  [0, 3, 2], [0, 2, 1], // Front
+  [4, 5, 6], [4, 6, 7], // Back
+  [0, 1, 5], [0, 5, 4], // Bottom
+  [2, 3, 7], [2, 7, 6], // Top
+  [1, 2, 6], [1, 6, 5], // Right
+  [0, 4, 7], [0, 7, 3]  // Left
 ];
 
 // ======================
 // Rasterizer
 // ======================
-function edge(a,b,c){
-  return (c.x-a.x)*(b.y-a.y) - (c.y-a.y)*(b.x-a.x);
+function edge(a, b, c) {
+  return (c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x);
 }
 
-function drawTri(v0,v1,v2, brightness){
-  let minX = Math.max(0, Math.floor(Math.min(v0.x,v1.x,v2.x)));
-  let maxX = Math.min(W-1, Math.ceil(Math.max(v0.x,v1.x,v2.x)));
-  let minY = Math.max(0, Math.floor(Math.min(v0.y,v1.y,v2.y)));
-  let maxY = Math.min(H-1, Math.ceil(Math.max(v0.y,v1.y,v2.y)));
+function drawTri(v0, v1, v2, brightness, colorHex) {
+  // Bounding Box
+  let minX = Math.max(0, Math.floor(Math.min(v0.x, v1.x, v2.x)));
+  let maxX = Math.min(W - 1, Math.ceil(Math.max(v0.x, v1.x, v2.x)));
+  let minY = Math.max(0, Math.floor(Math.min(v0.y, v1.y, v2.y)));
+  let maxY = Math.min(H - 1, Math.ceil(Math.max(v0.y, v1.y, v2.y)));
 
-  let area = edge(v0,v1,v2);
-  if(area === 0) return;
+  let area = edge(v0, v1, v2);
+  if (area === 0) return;
 
-  const eps = -0.0001;
+  const invZ0 = 1 / v0.z;
+  const invZ1 = 1 / v1.z;
+  const invZ2 = 1 / v2.z;
 
-  for(let y=minY; y<=maxY; y++){
-    for(let x=minX; x<=maxX; x++){
-      let p = {x,y};
+  // Basic color parsing (rgb)
+  let rBase = (colorHex >> 16) & 255;
+  let gBase = (colorHex >> 8) & 255;
+  let bBase = colorHex & 255;
 
-      let w0 = edge(v1,v2,p);
-      let w1 = edge(v2,v0,p);
-      let w2 = edge(v0,v1,p);
+  // Apply lighting
+  let lightMult = Math.pow(brightness / (brightness + 1), 1 / 2.2);
+  let r = Math.min(255, rBase * lightMult * 2);
+  let g = Math.min(255, gBase * lightMult * 2);
+  let b = Math.min(255, bBase * lightMult * 2);
 
-      if(
-        (w0>=eps && w1>=eps && w2>=eps) ||
-        (w0<=-eps && w1<=-eps && w2<=-eps)
-      ){
-        w0/=area; w1/=area; w2/=area;
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      let p = { x, y };
 
-        let z = 1 / (v0.z*w0 + v1.z*w1 + v2.z*w2);
-        let i = x + y*W;
+      let w0 = edge(v1, v2, p) / area;
+      let w1 = edge(v2, v0, p) / area;
+      let w2 = edge(v0, v1, p) / area;
 
-        if(z > depth[i]){
+      if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
+        // Perspective correct Z interpolation
+        let z = 1 / (invZ0 * w0 + invZ1 * w1 + invZ2 * w2);
+        let i = x + y * W;
+
+        // Depth test (smaller Z is closer)
+        if (z < depth[i]) {
           depth[i] = z;
 
-          // tone + gamma
-          let b = brightness / (brightness + 1);
-          let c = Math.pow(b, 1/2.2) * 255;
-
-          let idx = i*4;
-          img.data[idx] = c;
-          img.data[idx+1] = c;
-          img.data[idx+2] = c;
-          img.data[idx+3] = 255;
+          let idx = i * 4;
+          img.data[idx] = r;
+          img.data[idx + 1] = g;
+          img.data[idx + 2] = b;
+          img.data[idx + 3] = 255;
         }
       }
     }
@@ -154,106 +161,122 @@ function drawTri(v0,v1,v2, brightness){
 }
 
 // ======================
-// Rotation
+// Transforms
 // ======================
-function rotateY(v, a){
+function rotateY(v, a) {
   return vec3(
-    v.x*Math.cos(a) - v.z*Math.sin(a),
+    v.x * Math.cos(a) - v.z * Math.sin(a),
     v.y,
-    v.x*Math.sin(a) + v.z*Math.cos(a)
+    v.x * Math.sin(a) + v.z * Math.cos(a)
   );
 }
 
-function rotateX(v, a){
+function rotateX(v, a) {
   return vec3(
     v.x,
-    v.y*Math.cos(a) - v.z*Math.sin(a),
-    v.y*Math.sin(a) + v.z*Math.cos(a)
+    v.y * Math.cos(a) - v.z * Math.sin(a),
+    v.y * Math.sin(a) + v.z * Math.cos(a)
   );
 }
-
-// ======================
-// Lighting
-// ======================
-const lightDir = norm(vec3(1,1,-1));
 
 // ======================
 // Main Loop
 // ======================
-function loop(){
-  // movement
-  const speed = 0.08;
-  const rotSpeed = 0.03;
+const lightDir = norm(vec3(0.5, 1, -1));
+let lastTime = performance.now();
 
-  let forward = vec3(
-    Math.sin(camYaw) * Math.cos(camPitch),
-    Math.sin(camPitch),
-    Math.cos(camYaw) * Math.cos(camPitch)
-  );
+function loop() {
+  // Delta Time setup
+  let now = performance.now();
+  let dt = (now - lastTime) / 1000;
+  lastTime = now;
 
-  let right = vec3(
-    Math.cos(camYaw),
-    0,
-    -Math.sin(camYaw)
-  );
+  // Movement & Controls
+  const speed = 5.0 * dt;
+  const rotSpeed = 2.0 * dt;
 
-  if(keys["w"]) camPos = sub(camPos, vec3(forward.x*speed, forward.y*speed, forward.z*speed));
-  if(keys["s"]) camPos = add(camPos, vec3(forward.x*speed, forward.y*speed, forward.z*speed));
-  if(keys["a"]) camPos = add(camPos, vec3(right.x*speed, 0, right.z*speed));
-  if(keys["d"]) camPos = sub(camPos, vec3(right.x*speed, 0, right.z*speed));
+  // FPS-style movement (Locked to XZ plane)
+  let moveX = 0;
+  let moveZ = 0;
 
-  if(keys["q"]) camPos.y += speed;
-  if(keys["e"]) camPos.y -= speed;
+  if (keys["w"]) moveZ += 1;
+  if (keys["s"]) moveZ -= 1;
+  if (keys["a"]) moveX -= 1;
+  if (keys["d"]) moveX += 1;
 
-  if(keys["arrowleft"]) camYaw += rotSpeed;
-  if(keys["arrowright"]) camYaw -= rotSpeed;
-  if(keys["arrowup"]) camPitch -= rotSpeed;
-  if(keys["arrowdown"]) camPitch += rotSpeed;
+  // Calculate forward and right vectors based ONLY on Yaw
+  let forward = vec3(Math.sin(camYaw), 0, Math.cos(camYaw));
+  let right = vec3(Math.cos(camYaw), 0, -Math.sin(camYaw));
 
-  camPitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, camPitch));
+  // Apply movement
+  camPos.x += (forward.x * moveZ + right.x * moveX) * speed;
+  camPos.z += (forward.z * moveZ + right.z * moveX) * speed;
 
-  // clear
+  // Vertical movement
+  if (keys["q"]) camPos.y += speed;
+  if (keys["e"]) camPos.y -= speed;
+
+  // Camera Rotation
+  if (keys["arrowleft"]) camYaw -= rotSpeed;
+  if (keys["arrowright"]) camYaw += rotSpeed;
+  if (keys["arrowup"]) camPitch -= rotSpeed;
+  if (keys["arrowdown"]) camPitch += rotSpeed;
+
+  // Clamp pitch so you don't flip upside down
+  camPitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, camPitch));
+
+  // Clear buffers
   img.data.fill(0);
-  depth.fill(-Infinity);
+  depth.fill(Infinity); // FIXED: Infinity for proper Z-buffering
 
-  // transform vertices
-  let transformed = verts.map(v=>{
-    let r = vec3(v.x, v.y, v.z);
+  // Let's draw two cubes to make movement obvious
+  let objects = [
+    { pos: vec3(0, 0, 5), color: 0xaa4444 },   // Red cube
+    { pos: vec3(4, 0, 8), color: 0x44aa44 }    // Green cube
+  ];
 
-    // push cube forward
-    r.z += 5;
+  for (let obj of objects) {
+    let transformed = verts.map(v => {
+      // 1. World Transform (Position the object)
+      let r = add(v, obj.pos);
 
-    // camera transform
-    r = sub(r, camPos);
-    r = rotateY(r, -camYaw);
-    r = rotateX(r, -camPitch);
+      // 2. View Transform (Camera math)
+      r = sub(r, camPos);
+      r = rotateY(r, -camYaw);
+      r = rotateX(r, -camPitch);
 
-    return r;
-  });
+      return r;
+    });
 
-  for(let tri of tris){
-    let v0 = transformed[tri[0]];
-    let v1 = transformed[tri[1]];
-    let v2 = transformed[tri[2]];
+    for (let tri of tris) {
+      let v0 = transformed[tri[0]];
+      let v1 = transformed[tri[1]];
+      let v2 = transformed[tri[2]];
 
-    let n = norm(cross(sub(v1,v0), sub(v2,v0)));
+      // Near-Plane Culling (Stops the cooked stretching when you walk into the cube)
+      if (v0.z < 0.1 || v1.z < 0.1 || v2.z < 0.1) continue;
 
-    // backface culling
-    if(dot(n, v0) >= 0) continue;
+      // Face Normal
+      let n = norm(cross(sub(v1, v0), sub(v2, v0)));
 
-    // lighting
-    let diffuse = Math.max(0, dot(n, lightDir));
-    let ambient = 0.15;
-    let brightness = ambient + diffuse * 0.85;
+      // Backface Culling (View direction is roughly -v0 in view space)
+      if (dot(n, v0) >= 0) continue;
 
-    let p0 = toScreen(project(v0));
-    let p1 = toScreen(project(v1));
-    let p2 = toScreen(project(v2));
+      // Lighting
+      let diffuse = Math.max(0, dot(n, lightDir));
+      let ambient = 0.2;
+      let brightness = ambient + diffuse * 0.8;
 
-    drawTri(p0,p1,p2, brightness);
+      // Projection to 2D Screen
+      let p0 = toScreen(project(v0));
+      let p1 = toScreen(project(v1));
+      let p2 = toScreen(project(v2));
+
+      drawTri(p0, p1, p2, brightness, obj.color);
+    }
   }
 
-  ctx.putImageData(img,0,0);
+  ctx.putImageData(img, 0, 0);
   requestAnimationFrame(loop);
 }
 
