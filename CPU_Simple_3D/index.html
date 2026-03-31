@@ -10,7 +10,7 @@
 </style>
 </head>
 <body>
-<div id="ui">WASD to move | Q/E to fly up/down | Arrow Keys to look</div>
+<div id="ui">WASD to move | Space to jump | Arrow Keys to look</div>
 <canvas id="c"></canvas>
 <script>
 const canvas = document.getElementById("c");
@@ -51,11 +51,17 @@ function norm(v) {
 let camPos = vec3(0, 0, -3);
 let camYaw = 0;
 let camPitch = 0;
+let velocityY = 0;
+let isJumping = false;
+
+const GRAVITY = -9.8;
+const JUMP_STRENGTH = 5;
+const GROUND_LEVEL = 0;
 
 const keys = {};
 addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
 addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
-addEventListener("resize", () => location.reload()); 
+addEventListener("resize", () => location.reload());
 
 // ======================
 // Projection
@@ -200,10 +206,20 @@ function loop() {
   camPos.x += (forward.x * moveZ + right.x * moveX) * speed;
   camPos.z += (forward.z * moveZ + right.z * moveX) * speed;
 
-  if (keys["q"]) camPos.y += speed;
-  if (keys["e"]) camPos.y -= speed;
+  if (keys["space"] && !isJumping) {
+    velocityY = JUMP_STRENGTH;
+    isJumping = true;
+  }
 
-  // FIXED: Controls map intuitively to the rotation angles now
+  velocityY += GRAVITY * dt;
+  camPos.y += velocityY * dt;
+
+  if (camPos.y < GROUND_LEVEL) {
+    camPos.y = GROUND_LEVEL;
+    velocityY = 0;
+    isJumping = false;
+  }
+
   if (keys["arrowleft"]) camYaw -= rotSpeed;
   if (keys["arrowright"]) camYaw += rotSpeed;
   if (keys["arrowup"]) camPitch += rotSpeed;
@@ -212,7 +228,7 @@ function loop() {
   camPitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, camPitch));
 
   img.data.fill(0);
-  depth.fill(Infinity); 
+  depth.fill(Infinity);
 
   let objects = [
     { pos: vec3(0, 0, 5), color: 0xaa4444 },   
@@ -233,7 +249,6 @@ function loop() {
       let v1 = transformed[tri[1]];
       let v2 = transformed[tri[2]];
 
-      // Adjusted near-plane tolerance so triangles don't aggressively disappear
       if (v0.z < 0.01 || v1.z < 0.01 || v2.z < 0.01) continue;
 
       let n = norm(cross(sub(v1, v0), sub(v2, v0)));
