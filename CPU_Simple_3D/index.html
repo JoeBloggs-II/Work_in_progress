@@ -1,308 +1,277 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>CPU 3D Engine</title>
-<style>
-  body { margin:0; background:black; overflow:hidden; color:white; font-family:sans-serif; }
-  canvas { display:block; }
-  #ui { position:absolute; top:10px; left:10px; pointer-events:none; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Engine</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: black;
+            overflow: hidden;
+            color: white;
+            font-family: sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            pointer-events: none;
+        }
+    </style>
 </head>
 <body>
-<div id="ui">WASD move | Space jump | Arrow look</div>
-<canvas id="c"></canvas>
+    <div id="ui">WASD move | Space jump | Arrow look</div>
+    <canvas id="c"></canvas>
 
-<script>
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+    <script>
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
 
-canvas.width = innerWidth;
-canvas.height = innerHeight;
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
 
-const W = canvas.width;
-const H = canvas.height;
+        let img = ctx.createImageData(canvas.width, canvas.height);
+        let depth = new Float32Array(canvas.width * canvas.height);
 
-let img = ctx.createImageData(W, H);
-let depth = new Float32Array(W * H);
+        // Define camera properties
+        let camPos = vec3(0, 0, -3);
+        let camYaw = 0;
+        let camPitch = 0;
 
-// =====================
-// Math
-// =====================
-function vec3(x,y,z){return {x,y,z};}
-function add(a,b){return vec3(a.x+b.x,a.y+b.y,a.z+b.z);}
-function sub(a,b){return vec3(a.x-b.x,a.y-b.y,a.z-b.z);}
-function dot(a,b){return a.x*b.x+a.y*b.y+a.z*b.z;}
-function cross(a,b){
-  return vec3(
-    a.y*b.z-a.z*b.y,
-    a.z*b.x-a.x*b.z,
-    a.x*b.y-a.y*b.x
-  );
-}
-function norm(v){
-  let l=Math.hypot(v.x,v.y,v.z);
-  return l===0?vec3(0,0,0):vec3(v.x/l,v.y/l,v.z/l);
-}
+        let velY = 0;
+        let jumping = false;
 
-// =====================
-// Camera
-// =====================
-let camPos = vec3(0,0,-3);
-let camYaw = 0;
-let camPitch = 0;
+        const gravity = -12;
+        const jump = 14;
+        const groundZ = 0;
 
-let velY = 0;
-let jumping = false;
+        const keys = {};
 
-const GRAVITY = -12;
-const JUMP = 14;
-const GROUND = 0;
+        // Add event listeners for keydown and keyup events
+        document.addEventListener('keydown', e => keys[e.key] = true);
+        document.addEventListener('keyup', e => keys[e.key] = false);
 
-const keys = {};
-addEventListener("keydown",e=>keys[e.key.toLowerCase()]=true);
-addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
+        // Calculate FOV in radians
+        const fov = 90;
+        const aspectRatio = canvas.width / canvas.height;
+        const nearPlane = 1;
+        const farPlane = 1000;
+        const f = 1 / Math.tan((fov / 2) * Math.PI / 180);
 
-// =====================
-// Projection
-// =====================
-const fov = 90;
-const aspect = W/H;
-const f = 1/Math.tan((fov/2)*Math.PI/180);
+        // Projective transformation matrix
+        const projectionMatrix = [
+            [f / aspectRatio, 0, 0, 0],
+            [0, f, 0, 0],
+            [0, 0, -(farPlane + nearPlane) / (nearPlane - farPlane), -(2 * nearPlane * farPlane) / (nearPlane - farPlane)],
+            [0, 0, -1, 0]
+        ];
 
-function project(v){
-  return {
-    x:(v.x*f/aspect)/v.z,
-    y:(v.y*f)/v.z,
-    z:v.z
-  };
-}
-
-function toScreen(v){
-  return {
-    x:(v.x+1)*0.5*W,
-    y:(1-(v.y+1)*0.5)*H,
-    z:v.z
-  };
-}
-
-// =====================
-// Geometry
-// =====================
-const verts = [
-  vec3(-1,-1,-1), vec3(1,-1,-1),
-  vec3(1,1,-1), vec3(-1,1,-1),
-  vec3(-1,-1,1), vec3(1,-1,1),
-  vec3(1,1,1), vec3(-1,1,1)
-];
-
-const tris = [
-  [0,3,2],[0,2,1],
-  [4,5,6],[4,6,7],
-  [0,1,5],[0,5,4],
-  [2,3,7],[2,7,6],
-  [1,2,6],[1,6,5],
-  [0,4,7],[0,7,3]
-];
-
-// =====================
-// Lighting (CLEAN MODEL)
-// =====================
-
-// single sun direction (fixes "multiple lights" feeling)
-const lightDir = norm(vec3(0.4, 1, -0.6));
-
-function ambient(){
-  return 0.55; // 🔥 raise/lower overall brightness here
-}
-
-function lambert(n){
-  return Math.max(0, dot(n, lightDir));
-}
-
-// stable specular (Blinn-Phong)
-function specular(n, pos){
-  let viewDir = norm(sub(camPos, pos));
-  let halfDir = norm(add(lightDir, viewDir));
-  return Math.pow(Math.max(0, dot(n, halfDir)), 24);
-}
-
-// =====================
-// Raster
-// =====================
-function edge(a,b,c){
-  return (c.x-a.x)*(b.y-a.y)-(c.y-a.y)*(b.x-a.x);
-}
-
-function drawTri(v0,v1,v2,n0,n1,n2,color){
-
-  let minX=Math.max(0,Math.floor(Math.min(v0.x,v1.x,v2.x)));
-  let maxX=Math.min(W-1,Math.ceil(Math.max(v0.x,v1.x,v2.x)));
-  let minY=Math.max(0,Math.floor(Math.min(v0.y,v1.y,v2.y)));
-  let maxY=Math.min(H-1,Math.ceil(Math.max(v0.y,v1.y,v2.y)));
-
-  let area=edge(v0,v1,v2);
-  if(area===0)return;
-
-  let r=(color>>16)&255;
-  let g=(color>>8)&255;
-  let b=color&255;
-
-  for(let y=minY;y<=maxY;y++){
-    for(let x=minX;x<=maxX;x++){
-
-      let p={x,y};
-
-      let w0=edge(v1,v2,p)/area;
-      let w1=edge(v2,v0,p)/area;
-      let w2=edge(v0,v1,p)/area;
-
-      if(w0>=0&&w1>=0&&w2>=0){
-
-        let z = w0*v0.z + w1*v1.z + w2*v2.z;
-        let i = x + y*W;
-
-        if(z < depth[i]){
-
-          depth[i]=z;
-
-          // interpolated normal
-          let n = norm({
-            x:w0*n0.x + w1*n1.x + w2*n2.x,
-            y:w0*n0.y + w1*n1.y + w2*n2.y,
-            z:w0*n0.z + w1*n1.z + w2*n2.z
-          });
-
-          let diff = lambert(n);
-          let spec = specular(n, v0);
-
-          // 🔥 FINAL LIGHT MODEL (balanced)
-          let light =
-            ambient() +
-            diff * 0.85 +
-            spec * 0.20;
-
-          let idx=i*4;
-          img.data[idx]=Math.min(255,r*light*2);
-          img.data[idx+1]=Math.min(255,g*light*2);
-          img.data[idx+2]=Math.min(255,b*light*2);
-          img.data[idx+3]=255;
+        // Transformations for rotation around Y-axis
+        function rotateY(angle) {
+            return vec3(
+                Math.cos(angle) * camPos.x - Math.sin(angle) * camPos.z,
+                camPos.y,
+                Math.sin(angle) * camPos.x + Math.cos(angle) * camPos.z
+            );
         }
-      }
-    }
-  }
-}
 
-// =====================
-// Rotation
-// =====================
-function rotY(v,a){
-  return vec3(
-    v.x*Math.cos(a)+v.z*Math.sin(a),
-    v.y,
-    -v.x*Math.sin(a)+v.z*Math.cos(a)
-  );
-}
+        // Transformations for rotation around X-axis
+        function rotateX(angle) {
+            return vec3(
+                Math.cos(angle) * camPos.x,
+                Math.sin(angle) * camPos.y + camPos.z * Math.cos(angle),
+                -Math.sin(angle) * camPos.x + camPos.z * Math.cos(angle)
+            );
+        }
 
-function rotX(v,a){
-  return vec3(
-    v.x,
-    v.y*Math.cos(a)+v.z*Math.sin(a),
-    -v.y*Math.sin(a)+v.z*Math.cos(a)
-  );
-}
+        // Function to convert vertex coordinates to screen space
+        function toScreen(vertex) {
+            return {
+                x: (vertex.x + 1) * 0.5 * canvas.width,
+                y: (1 - (vertex.y + 1)) * canvas.height,
+                z: vertex.z
+            };
+        }
 
-// =====================
-// Main loop
-// =====================
-let last=performance.now();
+        // Function to calculate lighting model coefficients
+        function calculateLightCoefficients(normal, lightDirection) {
+            let diffuse = Math.max(0, dot(normal, lightDirection));
+            let specular = Math.pow(Math.max(0, dot(cross(normal, lightDirection), normalize(lightDirection))), 24);
+            return ambient() + diffuse * 0.85 + specular * 0.20;
+        }
 
-function loop(){
+        // Function to render triangles
+        function renderTriangles(triangles, vertices, colors) {
+            for (let triangle of triangles) {
+                let vert0 = vertices[triangle[0]];
+                let vert1 = vertices[triangle[1]];
+                let vert2 = vertices[triangle[2]];
 
-  let now=performance.now();
-  let dt=(now-last)/1000;
-  last=now;
+                let minX = Math.max(0, Math.floor(Math.min(vert0.x, vert1.x, vert2.x)));
+                let maxX = Math.min(canvas.width - 1, Math.ceil(Math.max(vert0.x, vert1.x, vert2.x)));
+                let minY = Math.max(0, Math.floor(Math.min(vert0.y, vert1.y, vert2.y)));
+                let maxY = Math.min(canvas.height - 1, Math.ceil(Math.max(vert0.y, vert1.y, vert2.y)));
 
-  let speed=5*dt;
-  let rot=2*dt;
+                for (let y = minY; y <= maxY; y++) {
+                    for (let x = minX; x <= maxX; x++) {
+                        let pixelIndex = x + y * canvas.width;
 
-  let mx=0,mz=0;
+                        let vertexIndex = pixelIndex * 4;
 
-  if(keys["w"])mz+=1;
-  if(keys["s"])mz-=1;
-  if(keys["a"])mx-=1;
-  if(keys["d"])mx+=1;
+                        let n0 = vertices[triangle[0]];
+                        let n1 = vertices[triangle[1]];
+                        let n2 = vertices[triangle[2]];
 
-  let forward=vec3(Math.sin(camYaw),0,Math.cos(camYaw));
-  let right=vec3(Math.cos(camYaw),0,-Math.sin(camYaw));
+                        let w0 = edge(vert1, vert2, {x: n1.x - n0.x, y: n1.y - n0.y, z: n1.z - n0.z}) / edge(vert0, vert1, {x: n0.x - n1.x, y: n0.y - n1.y, z: n0.z - n1.z});
+                        let w1 = edge(vert2, vert0, {x: n2.x - n1.x, y: n2.y - n1.y, z: n2.z - n1.z}) / edge(vert0, vert2, {x: n0.x - n2.x, y: n0.y - n2.y, z: n0.z - n2.z});
+                        let w2 = edge(vert0, vert1, {x: n0.x - n1.x, y: n0.y - n1.y, z: n0.z - n1.z}) / edge(vert0, vert1, {x: n1.x - n0.x, y: n1.y - n0.y, z: n1.z - n0.z});
 
-  camPos.x+=(forward.x*mz+right.x*mx)*speed;
-  camPos.z+=(forward.z*mz+right.z*mx)*speed;
+                        if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
 
-  if(keys[" "] && !jumping){
-    velY=JUMP;
-    jumping=true;
-  }
+                            let z = w0 * n0.z + w1 * n1.z + w2 * n2.z;
+                            let depthValue = z < depth[pixelIndex] ? z : depth[pixelIndex];
+                            depth[pixelIndex] = z;
 
-  velY+=GRAVITY*dt;
-  camPos.y+=velY*dt;
+                            let normal = normalize({x: w0 * n0.x + w1 * n1.x + w2 * n2.x, y: w0 * n0.y + w1 * n1.y + w2 * n2.y, z: w0 * n0.z + w1 * n1.z + w2 * n2.z});
 
-  if(camPos.y<GROUND){
-    camPos.y=GROUND;
-    velY=0;
-    jumping=false;
-  }
+                            let light = calculateLightCoefficients(normal, normalize(lightDir));
 
-  if(keys["arrowleft"])camYaw-=rot;
-  if(keys["arrowright"])camYaw+=rot;
+                            let colorIndex = pixelIndex * 4;
+                            img.data[colorIndex] = Math.min(255, Math.round(color * light * 2));
+                            img.data[colorIndex + 1] = Math.min(255, Math.round(color * light * 2));
+                            img.data[colorIndex + 2] = Math.min(255, Math.round(color * light * 2));
+                            img.data[colorIndex + 3] = 255;
+                        }
+                    }
+                }
+            }
+        }
 
-  img.data.fill(256);
-  depth.fill(Infinity);
+        // Event listener for keyboard input
+        function handleKeyboardInput(event) {
+            switch (event.code) {
+                case 'ArrowLeft':
+                    camYaw -= rot;
+                    break;
+                case 'ArrowRight':
+                    camYaw += rot;
+                    break;
+                case 'Spacebar':
+                    if (!jumping) {
+                        velY = jump;
+                        jumping = true;
+                    } else {
+                        velY = 0;
+                        jumping = false;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
 
-  let objects=[
-    {pos:vec3(0,0,5),color:0xaa4444},
-    {pos:vec3(4,0,8),color:0x44aa44}
-  ];
+        // Update the camera position based on user input
+        function updateCameraPosition() {
+            let mouseDeltaX = event.clientX - mouseX;
+            let mouseDeltaY = event.clientY - mouseY;
 
-  for(let obj of objects){
+            camPos.x += mouseDeltaX * speed;
+            camPos.z += mouseDeltaY * speed;
 
-    for(let tri of tris){
+            if (camPos.y < groundZ) {
+                camPos.y = groundZ;
+                velY = 0;
+                jumping = false;
+            }
+        }
 
-      let v0=verts[tri[0]];
-      let v1=verts[tri[1]];
-      let v2=verts[tri[2]];
+        // Initialize variables for rendering
+        let mouseX = 0;
+        let mouseY = 0;
 
-      function transform(v){
-        let r=add(v,obj.pos);
-        r=sub(r,camPos);
-        r=rotY(r,-camYaw);
-        r=rotX(r,-camPitch);
-        return r;
-      }
+        // Main rendering loop
+        function mainLoop() {
+            requestAnimationFrame(mainLoop);
 
-      let p0=transform(v0);
-      let p1=transform(v1);
-      let p2=transform(v2);
+            let currentTime = performance.now();
+            let deltaTime = (currentTime - lastTime) / 1000;
+            lastTime = currentTime;
 
-      if(p0.z<0.01||p1.z<0.01||p2.z<0.01)continue;
+            let speed = 5 * deltaTime;
+            let rotationSpeed = 2 * deltaTime;
 
-      let n0=norm(v0);
-      let n1=norm(v1);
-      let n2=norm(v2);
+            let mouseMovement = {
+                dx: 0,
+                dy: 0
+            };
 
-      let s0=toScreen(project(p0));
-      let s1=toScreen(project(p1));
-      let s2=toScreen(project(p2));
+            if (keys['ArrowLeft']) {
+                mouseMovement.dx -= rotationSpeed;
+            }
+            if (keys['ArrowRight']) {
+                mouseMovement.dx += rotationSpeed;
+            }
+            if (keys['ArrowUp']) {
+                mouseMovement.dy += rotationSpeed;
+            }
+            if (keys['ArrowDown']) {
+                mouseMovement.dy -= rotationSpeed;
+            }
 
-      drawTri(s0,s1,s2,n0,n1,n2,obj.color);
-    }
-  }
+            camYaw += mouseMovement.dx;
+            camPitch += mouseMovement.dy;
 
-  ctx.putImageData(img,0,0);
-  requestAnimationFrame(loop);
-}
+            let forward = vec3(Math.sin(camYaw), 0, Math.cos(camYaw));
+            let right = vec3(Math.cos(camYaw), 0, -Math.sin(camYaw));
 
-loop();
-</script>
+            camPos.x += forward.x * mouseMovement.dx + right.x * mouseMovement.dy;
+            camPos.z += forward.z * mouseMovement.dx + right.z * mouseMovement.dy;
+
+            img.data.fill(256);
+            depth.fill(Number.MAX_VALUE);
+
+            let objects = [
+                { pos: vec3(0, 0, 5), color: 0xff4444 },
+                { pos: vec3(4, 0, 8), color: 0x44ff44 }
+            ];
+
+            for (let object of objects) {
+                for (let triangle of tris) {
+                    let vertex0 = vertices[triangle[0]];
+                    let vertex1 = vertices[triangle[1]];
+                    let vertex2 = vertices[triangle[2]];
+
+                    let vertexTransformed0 = rotateY(rotateX(camYaw), vertex0);
+                    let vertexTransformed1 = rotateY(rotateX(camYaw), vertex1);
+                    let vertexTransformed2 = rotateY(rotateX(camYaw), vertex2);
+
+                    let transformedVertex0 = { x: vertexTransformed0.x, y: vertexTransformed0.y, z: vertexTransformed0.z };
+                    let transformedVertex1 = { x: vertexTransformed1.x, y: vertexTransformed1.y, z: vertexTransformed1.z };
+                    let transformedVertex2 = { x: vertexTransformed2.x, y: vertexTransformed2.y, z: vertexTransformed2.z };
+
+                    if (transformedVertex0.z < 0.01 || transformedVertex1.z < 0.01 || transformedVertex2.z < 0.01) continue;
+
+                    let normal0 = normalize(transformedVertex0);
+                    let normal1 = normalize(transformedVertex1);
+                    let normal2 = normalize(transformedVertex2);
+
+                    let s0 = toScreen(project(transformedVertex0));
+                    let s1 = toScreen(project(transformedVertex1));
+                    let s2 = toScreen(project(transformedVertex2));
+
+                    renderTriangles([s0, s1, s2], vertices, colors);
+                }
+            }
+
+            ctx.putImageData(img, 0, 0);
+        }
+
+        // Start the main loop
+        mainLoop();
+    </script>
 </body>
 </html>
