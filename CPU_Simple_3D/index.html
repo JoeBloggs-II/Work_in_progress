@@ -23,32 +23,13 @@ canvas.height = innerHeight;
 const W = canvas.width;
 const H = canvas.height;
 
-let img = ctx.createImageData(W, H);
-let depth = new Float32Array(W * H);
-
-// =====================
-// Math
-// =====================
-function vec3(x,y,z){return {x,y,z};}
-function add(a,b){return vec3(a.x+b.x,a.y+b.y,a.z+b.z);}
-function sub(a,b){return vec3(a.x-b.x,a.y-b.y,a.z-b.z);}
-function dot(a,b){return a.x*b.x+a.y*b.y+a.z*b.z;}
-function cross(a,b){
-  return vec3(
-    a.y*b.z-a.z*b.y,
-    a.z*b.x-a.x*b.z,
-    a.x*b.y-a.y*b.x
-  );
-}
-function norm(v){
-  let l=Math.hypot(v.x,v.y,v.z);
-  return l===0?vec3(0,0,0):vec3(v.x/l,v.y/l,v.z/l);
-}
+const img = ctx.createImageData(W, H);
+const depth = new Float32Array(W * H);
 
 // =====================
 // Camera
 // =====================
-let camPos = vec3(0,0,-3);
+let camPos = [0,0,-3];
 let camYaw = 0;
 let camPitch = 0;
 
@@ -70,30 +51,14 @@ const fov = 90;
 const aspect = W/H;
 const f = 1/Math.tan((fov/2)*Math.PI/180);
 
-function project(v){
-  return {
-    x:(v.x*f/aspect)/v.z,
-    y:(v.y*f)/v.z,
-    z:v.z
-  };
-}
-
-function toScreen(v){
-  return {
-    x:(v.x+1)*0.5*W,
-    y:(1-(v.y+1)*0.5)*H,
-    z:v.z
-  };
-}
-
 // =====================
-// Geometry
+// Geometry (precomputed normals = BIG WIN)
 // =====================
 const verts = [
-  vec3(-1,-1,-1), vec3(1,-1,-1),
-  vec3(1,1,-1), vec3(-1,1,-1),
-  vec3(-1,-1,1), vec3(1,-1,1),
-  vec3(1,1,1), vec3(-1,1,1)
+  [-1,-1,-1],[1,-1,-1],
+  [1,1,-1],[-1,1,-1],
+  [-1,-1,1],[1,-1,1],
+  [1,1,1],[-1,1,1]
 ];
 
 const tris = [
@@ -105,111 +70,96 @@ const tris = [
   [0,4,7],[0,7,3]
 ];
 
-// =====================
-// Lighting (CLEAN MODEL)
-// =====================
+// face normals (flat shading)
+const norms = [];
 
-// single sun direction (fixes "multiple lights" feeling)
-const lightDir = norm(vec3(0.4, 1, -0.6));
+function computeNormals(){
+  for(let i=0;i<tris.length;i++){
+    const a=verts[tris[i][0]];
+    const b=verts[tris[i][1]];
+    const c=verts[tris[i][2]];
 
-function ambient(){
-  return 0.55; // 🔥 raise/lower overall brightness here
+    const ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2];
+    const vx=c[0]-a[0], vy=c[1]-a[1], vz=c[2]-a[2];
+
+    const nx=uy*vz-uz*vy;
+    const ny=uz*vx-ux*vz;
+    const nz=ux*vy-uy*vx;
+
+    const len=1/Math.hypot(nx,ny,nz);
+    norms.push([nx*len,ny*len,nz*len]);
+  }
+}
+computeNormals();
+
+// =====================
+// Lighting
+// =====================
+const lightDir = (() => {
+  const l = Math.hypot(0.4,1,-0.6);
+  return [0.4/l,1/l,-0.6/l];
+})();
+
+const ambient = 0.55;
+
+function lambert(nx,ny,nz){
+  return Math.max(0,nx*lightDir[0]+ny*lightDir[1]+nz*lightDir[2]);
 }
 
-function lambert(n){
-  return Math.max(0, dot(n, lightDir));
-}
-
-// stable specular (Blinn-Phong)
-function specular(n, pos){
-  let viewDir = norm(sub(camPos, pos));
-  let halfDir = norm(add(lightDir, viewDir));
-  return Math.pow(Math.max(0, dot(n, halfDir)), 24);
-}
-
 // =====================
-// Raster
+// Raster (FAST)
 // =====================
-function edge(a,b,c){
-  return (c.x-a.x)*(b.y-a.y)-(c.y-a.y)*(b.x-a.x);
+function edge(ax,ay,bx,by,cx,cy){
+  return (cx-ax)*(by-ay)-(cy-ay)*(bx-ax);
 }
 
-function drawTri(v0,v1,v2,n0,n1,n2,color){
+function drawTri(v0,v1,v2,n,color){
 
-  let minX=Math.max(0,Math.floor(Math.min(v0.x,v1.x,v2.x)));
-  let maxX=Math.min(W-1,Math.ceil(Math.max(v0.x,v1.x,v2.x)));
-  let minY=Math.max(0,Math.floor(Math.min(v0.y,v1.y,v2.y)));
-  let maxY=Math.min(H-1,Math.ceil(Math.max(v0.y,v1.y,v2.y)));
+  const minX = Math.max(0,(Math.min(v0[0],v1[0],v2[0])|0));
+  const maxX = Math.min(W-1,(Math.max(v0[0],v1[0],v2[0])|0));
+  const minY = Math.max(0,(Math.min(v0[1],v1[1],v2[1])|0));
+  const maxY = Math.min(H-1,(Math.max(v0[1],v1[1],v2[1])|0));
 
-  let area=edge(v0,v1,v2);
+  const area = edge(v0[0],v0[1],v1[0],v1[1],v2[0],v2[1]);
   if(area===0)return;
 
-  let r=(color>>16)&255;
-  let g=(color>>8)&255;
-  let b=color&255;
+  const r=(color>>16)&255;
+  const g=(color>>8)&255;
+  const b=color&255;
 
   for(let y=minY;y<=maxY;y++){
+    let row=y*W;
+
     for(let x=minX;x<=maxX;x++){
 
-      let p={x,y};
-
-      let w0=edge(v1,v2,p)/area;
-      let w1=edge(v2,v0,p)/area;
-      let w2=edge(v0,v1,p)/area;
+      const w0=edge(v1[0],v1[1],v2[0],v2[1],x,y)/area;
+      const w1=edge(v2[0],v2[1],v0[0],v0[1],x,y)/area;
+      const w2=edge(v0[0],v0[1],v1[0],v1[1],x,y)/area;
 
       if(w0>=0&&w1>=0&&w2>=0){
 
-        let z = w0*v0.z + w1*v1.z + w2*v2.z;
-        let i = x + y*W;
+        const i=row+x;
 
-        if(z < depth[i]){
+        const z = w0*v0[2]+w1*v1[2]+w2*v2[2];
+        if(z<depth[i]){
 
           depth[i]=z;
 
-          // interpolated normal
-          let n = norm({
-            x:w0*n0.x + w1*n1.x + w2*n2.x,
-            y:w0*n0.y + w1*n1.y + w2*n2.y,
-            z:w0*n0.z + w1*n1.z + w2*n2.z
-          });
+          const nx=n[0], ny=n[1], nz=n[2];
 
-          let diff = lambert(n);
-          let spec = specular(n, v0);
+          const light =
+            ambient +
+            lambert(nx,ny,nz)*0.85;
 
-          // 🔥 FINAL LIGHT MODEL (balanced)
-          let light =
-            ambient() +
-            diff * 0.85 +
-            spec * 0.20;
-
-          let idx=i*4;
-          img.data[idx]=Math.min(255,r*light*2);
-          img.data[idx+1]=Math.min(255,g*light*2);
-          img.data[idx+2]=Math.min(255,b*light*2);
-          img.data[idx+3]=255;
+          const idx=i*4;
+          img.data[idx]   = r*light*2;
+          img.data[idx+1] = g*light*2;
+          img.data[idx+2] = b*light*2;
+          img.data[idx+3] = 255;
         }
       }
     }
   }
-}
-
-// =====================
-// Rotation
-// =====================
-function rotY(v,a){
-  return vec3(
-    v.x*Math.cos(a)+v.z*Math.sin(a),
-    v.y,
-    -v.x*Math.sin(a)+v.z*Math.cos(a)
-  );
-}
-
-function rotX(v,a){
-  return vec3(
-    v.x,
-    v.y*Math.cos(a)+v.z*Math.sin(a),
-    -v.y*Math.sin(a)+v.z*Math.cos(a)
-  );
 }
 
 // =====================
@@ -219,25 +169,24 @@ let last=performance.now();
 
 function loop(){
 
-  let now=performance.now();
-  let dt=(now-last)/1000;
+  const now=performance.now();
+  const dt=(now-last)/1000;
   last=now;
 
-  let speed=5*dt;
-  let rot=2*dt;
+  const speed=5*dt;
+  const rot=2*dt;
+
+  const sinY=Math.sin(camYaw);
+  const cosY=Math.cos(camYaw);
 
   let mx=0,mz=0;
-
   if(keys["w"])mz+=1;
   if(keys["s"])mz-=1;
   if(keys["a"])mx-=1;
   if(keys["d"])mx+=1;
 
-  let forward=vec3(Math.sin(camYaw),0,Math.cos(camYaw));
-  let right=vec3(Math.cos(camYaw),0,-Math.sin(camYaw));
-
-  camPos.x+=(forward.x*mz+right.x*mx)*speed;
-  camPos.z+=(forward.z*mz+right.z*mx)*speed;
+  camPos[0]+=(sinY*mz+cosY*mx)*speed;
+  camPos[2]+=(cosY*mz-sinY*mx)*speed;
 
   if(keys[" "] && !jumping){
     velY=JUMP;
@@ -245,10 +194,10 @@ function loop(){
   }
 
   velY+=GRAVITY*dt;
-  camPos.y+=velY*dt;
+  camPos[1]+=velY*dt;
 
-  if(camPos.y<GROUND){
-    camPos.y=GROUND;
+  if(camPos[1]<GROUND){
+    camPos[1]=GROUND;
     velY=0;
     jumping=false;
   }
@@ -256,45 +205,60 @@ function loop(){
   if(keys["arrowleft"])camYaw-=rot;
   if(keys["arrowright"])camYaw+=rot;
 
-  img.data.fill(256);
   depth.fill(Infinity);
 
-  let objects=[
-    {pos:vec3(0,0,5),color:0xaa4444},
-    {pos:vec3(4,0,8),color:0x44aa44}
+  // clear image (fast)
+  img.data.fill(0);
+
+  const objects=[
+    {pos:[0,0,5],color:0xaa4444},
+    {pos:[4,0,8],color:0x44aa44}
   ];
 
-  for(let obj of objects){
+  const sinYc=Math.sin(-camYaw);
+  const cosYc=Math.cos(-camYaw);
 
-    for(let tri of tris){
+  for(const obj of objects){
 
-      let v0=verts[tri[0]];
-      let v1=verts[tri[1]];
-      let v2=verts[tri[2]];
+    const ox=obj.pos[0]-camPos[0];
+    const oy=obj.pos[1]-camPos[1];
+    const oz=obj.pos[2]-camPos[2];
+
+    for(let i=0;i<tris.length;i++){
+
+      const t=tris[i];
+      const n=norms[i];
+
+      const a=verts[t[0]];
+      const b=verts[t[1]];
+      const c=verts[t[2]];
 
       function transform(v){
-        let r=add(v,obj.pos);
-        r=sub(r,camPos);
-        r=rotY(r,-camYaw);
-        r=rotX(r,-camPitch);
-        return r;
+        let x=v[0]+ox;
+        let y=v[1]+oy;
+        let z=v[2]+oz;
+
+        let tx=x*cosYc+z*sinYc;
+        let tz=-x*sinYc+z*cosYc;
+
+        return [
+          (tx*f/aspect)/tz,
+          (y*f)/tz,
+          tz
+        ];
       }
 
-      let p0=transform(v0);
-      let p1=transform(v1);
-      let p2=transform(v2);
+      const p0=transform(a);
+      const p1=transform(b);
+      const p2=transform(c);
 
-      if(p0.z<0.01||p1.z<0.01||p2.z<0.01)continue;
+      if(p0[2]<0.01||p1[2]<0.01||p2[2]<0.01)continue;
 
-      let n0=norm(v0);
-      let n1=norm(v1);
-      let n2=norm(v2);
+      const s0=[(p0[0]+1)*0.5*W,(1-(p0[1]+1)*0.5)*H,p0[2]];
+      const s1=[(p1[0]+1)*0.5*W,(1-(p1[1]+1)*0.5)*H,p1[2]];
+      const s2=[(p2[0]+1)*0.5*W,(1-(p2[1]+1)*0.5)*H,p2[2]];
 
-      let s0=toScreen(project(p0));
-      let s1=toScreen(project(p1));
-      let s2=toScreen(project(p2));
-
-      drawTri(s0,s1,s2,n0,n1,n2,obj.color);
+      drawTri(s0,s1,s2,n,obj.color);
     }
   }
 
