@@ -120,7 +120,7 @@ function drawTri(v0,v1,v2, brightness){
         let z = 1 / (v0.z*w0 + v1.z*w1 + v2.z*w2);
         let i = x + y*W;
 
-        if(z < depth[i]){
+        if(z > depth[i]){
           depth[i] = z;
 
           let c = brightness*255;
