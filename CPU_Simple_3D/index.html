@@ -84,7 +84,7 @@
             return vec3(
                 Math.cos(angle) * camPos.x,
                 Math.sin(angle) * camPos.y + camPos.z * Math.cos(angle),
-                -Math.sin(angle) * camPos.x + camPos.z * Math.cos(angle)
+                -Math.sin(angle) * camPos.x + Math.cos(angle) * camPos.z
             );
         }
 
@@ -126,9 +126,9 @@
                         let n1 = vertices[triangle[1]];
                         let n2 = vertices[triangle[2]];
 
-                        let w0 = edge(vert1, vert2, {x: n1.x - n0.x, y: n1.y - n0.y, z: n1.z - n0.z}) / edge(vert0, vert1, {x: n0.x - n1.x, y: n0.y - n1.y, z: n0.z - n1.z});
-                        let w1 = edge(vert2, vert0, {x: n2.x - n1.x, y: n2.y - n1.y, z: n2.z - n1.z}) / edge(vert0, vert2, {x: n0.x - n2.x, y: n0.y - n2.y, z: n0.z - n2.z});
-                        let w2 = edge(vert0, vert1, {x: n0.x - n1.x, y: n0.y - n1.y, z: n0.z - n1.z}) / edge(vert0, vert1, {x: n1.x - n0.x, y: n1.y - n0.y, z: n1.z - n0.z});
+                        let w0 = edge(vert1, vert2, { x: n1.x - n0.x, y: n1.y - n0.y, z: n1.z - n0.z }) / edge(vert0, vert1, { x: n0.x - n1.x, y: n0.y - n1.y, z: n0.z - n1.z });
+                        let w1 = edge(vert2, vert0, { x: n2.x - n1.x, y: n2.y - n1.y, z: n2.z - n1.z }) / edge(vert0, vert2, { x: n0.x - n2.x, y: n0.y - n2.y, z: n0.z - n2.z });
+                        let w2 = edge(vert0, vert1, { x: n0.x - n1.x, y: n0.y - n1.y, z: n0.z - n1.z }) / edge(vert0, vert1, { x: n1.x - n0.x, y: n1.y - n0.y, z: n1.z - n0.z });
 
                         if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
 
@@ -136,7 +136,7 @@
                             let depthValue = z < depth[pixelIndex] ? z : depth[pixelIndex];
                             depth[pixelIndex] = z;
 
-                            let normal = normalize({x: w0 * n0.x + w1 * n1.x + w2 * n2.x, y: w0 * n0.y + w1 * n1.y + w2 * n2.y, z: w0 * n0.z + w1 * n1.z + w2 * n2.z});
+                            let normal = normalize({ x: w0 * n0.x + w1 * n1.x + w2 * n2.x, y: w0 * n0.y + w1 * n1.y + w2 * n2.y, z: w0 * n0.z + w1 * n1.z + w2 * n2.z });
 
                             let light = calculateLightCoefficients(normal, normalize(lightDir));
 
@@ -155,10 +155,10 @@
         function handleKeyboardInput(event) {
             switch (event.code) {
                 case 'ArrowLeft':
-                    camYaw -= rot;
+                    camYaw -= rotationSpeed;
                     break;
                 case 'ArrowRight':
-                    camYaw += rot;
+                    camYaw += rotationSpeed;
                     break;
                 case 'Spacebar':
                     if (!jumping) {
