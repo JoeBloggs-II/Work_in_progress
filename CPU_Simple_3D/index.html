@@ -133,9 +133,9 @@ function drawTri(v0,v1,v2, brightness){
 
           let c = brightness*255;
           let idx = i*4;
-          img.data[idx] = c*1.1;
-          img.data[idx+1] = c*0.5;
-          img.data[idx+2] = c*0.5;
+          img.data[idx] = c;
+          img.data[idx+1] = c;
+          img.data[idx+2] = c;
           img.data[idx+3] = 255;
         }
       }
@@ -200,10 +200,10 @@ function loop(){
     let viewDir = norm(v0);
     if(dot(n, viewDir) >= 0) continue;
 
-    // lighting
-    let brightness = Math.max(0.1, dot(n, lightDir));
-    brightness += 0.1;
-    brightness = Math.min(1.0, brightness);
+    // FIXED: Ambient + Diffuse Lighting
+    let diffuse = Math.max(0, dot(n, lightDir));
+    let ambient = 0.15; 
+    let brightness = ambient + (diffuse * 0.85);
 
     // project
     let p0 = toScreen(project(v0));
