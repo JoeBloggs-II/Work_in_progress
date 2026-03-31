@@ -18,8 +18,8 @@ const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
 canvas.width = innerWidth;
 canvas.height = innerHeight;
-const W = canvas.width*2;
-const H = canvas.height*2;
+const W = canvas.width;
+const H = canvas.height;
 
 // Buffers
 let img = ctx.createImageData(W, H);
