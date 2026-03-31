@@ -81,13 +81,20 @@ const verts = [
   vec3(1,1,1), vec3(-1,1,1)
 ];
 
+// FIXED: Adjusted winding order so all normals point outward
 const tris = [
-  [0,1,2],[0,2,3],
-  [4,5,6],[4,6,7],
-  [0,1,5],[0,5,4],
-  [2,3,7],[2,7,6],
-  [1,2,6],[1,6,5],
-  [0,3,7],[0,7,4]
+  // Front (Z = -1)
+  [0,3,2], [0,2,1],
+  // Back (Z = 1)
+  [4,5,6], [4,6,7],
+  // Bottom (Y = -1)
+  [0,1,5], [0,5,4],
+  // Top (Y = 1)
+  [2,3,7], [2,7,6],
+  // Right (X = 1)
+  [1,2,6], [1,6,5],
+  // Left (X = -1)
+  [0,4,7], [0,7,3]
 ];
 
 // ======================
@@ -120,7 +127,8 @@ function drawTri(v0,v1,v2, brightness){
         let z = 1 / (v0.z*w0 + v1.z*w1 + v2.z*w2);
         let i = x + y*W;
 
-        if(z > depth[i]){
+        // FIXED: Check against Infinity, ensure z > 0
+        if(z < depth[i] && z > 0){
           depth[i] = z;
 
           let c = brightness*255;
@@ -169,7 +177,9 @@ function loop(){
 
   // clear
   img.data.fill(0);
-  depth.fill(-Infinity);
+  
+  // FIXED: Clear Z-buffer with Infinity
+  depth.fill(Infinity);
 
   let transformed = verts.map(v=>{
     let r = rotateY(v,t);
