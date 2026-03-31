@@ -202,6 +202,8 @@ function loop(){
 
     // lighting
     let brightness = Math.max(0.1, dot(n, lightDir));
+    brightness += 0.1;
+    brightness = Math.min(1.0, brightness);
 
     // project
     let p0 = toScreen(project(v0));
