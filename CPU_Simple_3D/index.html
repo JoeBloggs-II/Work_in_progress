@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>CPU 3D Engine (Gouraud)</title>
+<title>CPU 3D Engine - Improved Lighting</title>
 <style>
   body { margin:0; background:black; overflow:hidden; color:white; font-family:sans-serif; }
   canvas { display:block; }
@@ -10,7 +10,7 @@
 </style>
 </head>
 <body>
-<div id="ui">WASD move | Space jump | Arrows look</div>
+<div id="ui">WASD move | Space jump | Arrow look</div>
 <canvas id="c"></canvas>
 
 <script>
@@ -27,7 +27,7 @@ let img = ctx.createImageData(W, H);
 let depth = new Float32Array(W * H);
 
 // =====================
-// Vector helpers
+// Math
 // =====================
 function vec3(x,y,z){return {x,y,z};}
 function add(a,b){return vec3(a.x+b.x,a.y+b.y,a.z+b.z);}
@@ -42,8 +42,7 @@ function cross(a,b){
 }
 function norm(v){
   let l=Math.hypot(v.x,v.y,v.z);
-  if(l===0)return vec3(0,0,0);
-  return vec3(v.x/l,v.y/l,v.z/l);
+  return l===0?vec3(0,0,0):vec3(v.x/l,v.y/l,v.z/l);
 }
 
 // =====================
@@ -53,7 +52,7 @@ let camPos = vec3(0,0,-3);
 let camYaw = 0;
 let camPitch = 0;
 
-let velocityY = 0;
+let velY = 0;
 let jumping = false;
 
 const GRAVITY = -9.8;
@@ -88,7 +87,7 @@ function toScreen(v){
 }
 
 // =====================
-// Cube geometry
+// Cube
 // =====================
 const verts = [
   vec3(-1,-1,-1), vec3(1,-1,-1),
@@ -107,14 +106,42 @@ const tris = [
 ];
 
 // =====================
-// Rasterization
+// Raster
 // =====================
 function edge(a,b,c){
   return (c.x-a.x)*(b.y-a.y)-(c.y-a.y)*(b.x-a.x);
 }
 
-// Gouraud triangle
-function drawTri(v0,v1,v2,b0,b1,b2,color){
+// =====================
+// Lighting (PBR-lite style)
+// =====================
+const lightDir = norm(vec3(0.5,1,-1));
+
+function lambert(n){
+  return Math.max(0,dot(n,lightDir));
+}
+
+// Blinn-Phong specular
+function specular(n, pos){
+  let viewDir = norm(sub(camPos,pos));
+  let halfDir = norm(add(lightDir, viewDir));
+  return Math.pow(Math.max(0,dot(n,halfDir)),32);
+}
+
+// Cheap ambient occlusion approximation
+function ambientOcclusion(n){
+  // based on how “upward facing” + curvature
+  let up = vec3(0,1,0);
+  let align = Math.max(0,dot(n,up));
+
+  // darker in creases, brighter on top faces
+  return 0.15 + align * 0.85;
+}
+
+// =====================
+// Draw triangle
+// =====================
+function drawTri(v0,v1,v2,n0,n1,n2,color){
 
   let minX=Math.max(0,Math.floor(Math.min(v0.x,v1.x,v2.x)));
   let maxX=Math.min(W-1,Math.ceil(Math.max(v0.x,v1.x,v2.x)));
@@ -124,9 +151,9 @@ function drawTri(v0,v1,v2,b0,b1,b2,color){
   let area=edge(v0,v1,v2);
   if(area===0)return;
 
-  let rBase=(color>>16)&255;
-  let gBase=(color>>8)&255;
-  let bBase=color&255;
+  let r=(color>>16)&255;
+  let g=(color>>8)&255;
+  let b=color&255;
 
   for(let y=minY;y<=maxY;y++){
     for(let x=minX;x<=maxX;x++){
@@ -137,7 +164,7 @@ function drawTri(v0,v1,v2,b0,b1,b2,color){
       let w1=edge(v2,v0,p)/area;
       let w2=edge(v0,v1,p)/area;
 
-      if(w0>=0 && w1>=0 && w2>=0){
+      if(w0>=0&&w1>=0&&w2>=0){
 
         let z = w0*v0.z + w1*v1.z + w2*v2.z;
         let i = x + y*W;
@@ -146,14 +173,24 @@ function drawTri(v0,v1,v2,b0,b1,b2,color){
 
           depth[i]=z;
 
-          // 🌟 Gouraud interpolation
-          let brightness = w0*b0 + w1*b1 + w2*b2;
-          let light = Math.pow(brightness/(brightness+1),1/2.2);
+          // interpolated normal
+          let n = norm({
+            x:w0*n0.x + w1*n1.x + w2*n2.x,
+            y:w0*n0.y + w1*n1.y + w2*n2.y,
+            z:w0*n0.z + w1*n1.z + w2*n2.z
+          });
+
+          let diff = lambert(n);
+          let spec = specular(n, v0);
+          let ao = ambientOcclusion(n);
+
+          let light =
+            (0.25 + diff*0.75 + spec*0.6) * ao;
 
           let idx=i*4;
-          img.data[idx]=Math.min(255,rBase*light*2);
-          img.data[idx+1]=Math.min(255,gBase*light*2);
-          img.data[idx+2]=Math.min(255,bBase*light*2);
+          img.data[idx]=Math.min(255,r*light*2);
+          img.data[idx+1]=Math.min(255,g*light*2);
+          img.data[idx+2]=Math.min(255,b*light*2);
           img.data[idx+3]=255;
         }
       }
@@ -164,7 +201,7 @@ function drawTri(v0,v1,v2,b0,b1,b2,color){
 // =====================
 // Rotation
 // =====================
-function rotateY(v,a){
+function rotY(v,a){
   return vec3(
     v.x*Math.cos(a)+v.z*Math.sin(a),
     v.y,
@@ -172,7 +209,7 @@ function rotateY(v,a){
   );
 }
 
-function rotateX(v,a){
+function rotX(v,a){
   return vec3(
     v.x,
     v.y*Math.cos(a)+v.z*Math.sin(a),
@@ -181,57 +218,48 @@ function rotateX(v,a){
 }
 
 // =====================
-// Lighting
-// =====================
-const lightDir = norm(vec3(0.5,1,-1));
-
-function getBrightness(n){
-  let diffuse=Math.max(0,dot(n,lightDir));
-  return 0.2 + diffuse*0.8;
-}
-
-// =====================
-// Main loop
+// Loop
 // =====================
 let last=performance.now();
 
 function loop(){
+
   let now=performance.now();
   let dt=(now-last)/1000;
   last=now;
 
   let speed=5*dt;
-  let rotSpeed=2*dt;
+  let rot=2*dt;
 
-  let moveX=0,moveZ=0;
+  let mx=0,mz=0;
 
-  if(keys["w"])moveZ+=1;
-  if(keys["s"])moveZ-=1;
-  if(keys["a"])moveX-=1;
-  if(keys["d"])moveX+=1;
+  if(keys["w"])mz+=1;
+  if(keys["s"])mz-=1;
+  if(keys["a"])mx-=1;
+  if(keys["d"])mx+=1;
 
   let forward=vec3(Math.sin(camYaw),0,Math.cos(camYaw));
   let right=vec3(Math.cos(camYaw),0,-Math.sin(camYaw));
 
-  camPos.x+=(forward.x*moveZ+right.x*moveX)*speed;
-  camPos.z+=(forward.z*moveZ+right.z*moveX)*speed;
+  camPos.x+=(forward.x*mz+right.x*mx)*speed;
+  camPos.z+=(forward.z*mz+right.z*mx)*speed;
 
-  if(keys[" " ] && !jumping){
-    velocityY=JUMP;
+  if(keys[" "] && !jumping){
+    velY=JUMP;
     jumping=true;
   }
 
-  velocityY+=GRAVITY*dt;
-  camPos.y+=velocityY*dt;
+  velY+=GRAVITY*dt;
+  camPos.y+=velY*dt;
 
   if(camPos.y<GROUND){
     camPos.y=GROUND;
-    velocityY=0;
+    velY=0;
     jumping=false;
   }
 
-  if(keys["arrowleft"])camYaw-=rotSpeed;
-  if(keys["arrowright"])camYaw+=rotSpeed;
+  if(keys["arrowleft"])camYaw-=rot;
+  if(keys["arrowright"])camYaw+=rot;
 
   img.data.fill(0);
   depth.fill(Infinity);
@@ -245,16 +273,15 @@ function loop(){
 
     for(let tri of tris){
 
-      let i0=tri[0],i1=tri[1],i2=tri[2];
+      let v0=verts[tri[0]];
+      let v1=verts[tri[1]];
+      let v2=verts[tri[2]];
 
-      let v0=verts[i0],v1=verts[i1],v2=verts[i2];
-
-      // --- vertex transform (positions)
       function transform(v){
         let r=add(v,obj.pos);
         r=sub(r,camPos);
-        r=rotateY(r,-camYaw);
-        r=rotateX(r,-camPitch);
+        r=rotY(r,-camYaw);
+        r=rotX(r,-camPitch);
         return r;
       }
 
@@ -264,29 +291,15 @@ function loop(){
 
       if(p0.z<0.01||p1.z<0.01||p2.z<0.01)continue;
 
-      // --- normals (OBJECT SPACE → rotated only)
-      let n0 = norm(v0);
-      let n1 = norm(v1);
-      let n2 = norm(v2);
+      let n0=norm(v0);
+      let n1=norm(v1);
+      let n2=norm(v2);
 
-      n0 = rotateY(n0,-camYaw);
-      n0 = rotateX(n0,-camPitch);
+      let s0=toScreen(project(p0));
+      let s1=toScreen(project(p1));
+      let s2=toScreen(project(p2));
 
-      n1 = rotateY(n1,-camYaw);
-      n1 = rotateX(n1,-camPitch);
-
-      n2 = rotateY(n2,-camYaw);
-      n2 = rotateX(n2,-camPitch);
-
-      let b0=getBrightness(n0);
-      let b1=getBrightness(n1);
-      let b2=getBrightness(n2);
-
-      let screen0=toScreen(project(p0));
-      let screen1=toScreen(project(p1));
-      let screen2=toScreen(project(p2));
-
-      drawTri(screen0,screen1,screen2,b0,b1,b2,obj.color);
+      drawTri(s0,s1,s2,n0,n1,n2,obj.color);
     }
   }
 
