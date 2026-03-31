@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>CPU 3D Engine - Improved Lighting</title>
+<title>CPU 3D Engine - Clean Lighting</title>
 <style>
   body { margin:0; background:black; overflow:hidden; color:white; font-family:sans-serif; }
   canvas { display:block; }
@@ -87,7 +87,7 @@ function toScreen(v){
 }
 
 // =====================
-// Cube
+// Geometry
 // =====================
 const verts = [
   vec3(-1,-1,-1), vec3(1,-1,-1),
@@ -106,41 +106,34 @@ const tris = [
 ];
 
 // =====================
+// Lighting (CLEAN MODEL)
+// =====================
+
+// single sun direction (fixes "multiple lights" feeling)
+const lightDir = norm(vec3(0.4, 1, -0.6));
+
+function ambient(){
+  return 0.55; // 🔥 raise/lower overall brightness here
+}
+
+function lambert(n){
+  return Math.max(0, dot(n, lightDir));
+}
+
+// stable specular (Blinn-Phong)
+function specular(n, pos){
+  let viewDir = norm(sub(camPos, pos));
+  let halfDir = norm(add(lightDir, viewDir));
+  return Math.pow(Math.max(0, dot(n, halfDir)), 24);
+}
+
+// =====================
 // Raster
 // =====================
 function edge(a,b,c){
   return (c.x-a.x)*(b.y-a.y)-(c.y-a.y)*(b.x-a.x);
 }
 
-// =====================
-// Lighting (PBR-lite style)
-// =====================
-const lightDir = norm(vec3(0.5,1,-1));
-
-function lambert(n){
-  return Math.max(0,dot(n,lightDir));
-}
-
-// Blinn-Phong specular
-function specular(n, pos){
-  let viewDir = norm(sub(camPos,pos));
-  let halfDir = norm(add(lightDir, viewDir));
-  return Math.pow(Math.max(0,dot(n,halfDir)),32);
-}
-
-// Cheap ambient occlusion approximation
-function ambientOcclusion(n){
-  // based on how “upward facing” + curvature
-  let up = vec3(0,1,0);
-  let align = Math.max(0,dot(n,up));
-
-  // darker in creases, brighter on top faces
-  return 0.15 + align * 0.85;
-}
-
-// =====================
-// Draw triangle
-// =====================
 function drawTri(v0,v1,v2,n0,n1,n2,color){
 
   let minX=Math.max(0,Math.floor(Math.min(v0.x,v1.x,v2.x)));
@@ -182,10 +175,12 @@ function drawTri(v0,v1,v2,n0,n1,n2,color){
 
           let diff = lambert(n);
           let spec = specular(n, v0);
-          let ao = ambientOcclusion(n);
 
+          // 🔥 FINAL LIGHT MODEL (balanced)
           let light =
-            (0.25 + diff*0.75 + spec*0.6) * ao;
+            ambient() +
+            diff * 0.85 +
+            spec * 0.20;
 
           let idx=i*4;
           img.data[idx]=Math.min(255,r*light*2);
@@ -218,7 +213,7 @@ function rotX(v,a){
 }
 
 // =====================
-// Loop
+// Main loop
 // =====================
 let last=performance.now();
 
