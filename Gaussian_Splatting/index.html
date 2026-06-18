@@ -1,9 +1,10 @@
 <canvas id="c"></canvas>
 
 <script>
+const W = 200, H = 200;
 const canvas = document.getElementById("c");
-canvas.width = 200;
-canvas.height = 200;
+canvas.width = W;
+canvas.height = H;
 
 const gl = canvas.getContext("webgl2");
 
@@ -20,7 +21,7 @@ precision highp float;
 
 out vec4 outColor;
 
-#define N 60
+#define N 80
 
 uniform vec2 u_pos[N];
 uniform vec3 u_col[N];
@@ -28,30 +29,29 @@ uniform float u_sigma[N];
 uniform float u_alpha[N];
 uniform int u_count;
 
-float gauss(float d2, float s) {
-  return exp(-d2 / (2.0 * s * s));
+float g(float d2, float s){
+  return exp(-d2 / (2.0*s*s));
 }
 
-void main() {
+void main(){
   vec2 uv = gl_FragCoord.xy;
 
   vec3 col = vec3(0.0);
 
-  for (int i = 0; i < N; i++) {
-    if (i >= u_count) break;
+  for(int i=0;i<N;i++){
+    if(i>=u_count) break;
 
     vec2 d = uv - u_pos[i];
-    float w = gauss(dot(d,d), u_sigma[i]) * u_alpha[i];
+    float w = g(dot(d,d), u_sigma[i]) * u_alpha[i];
 
     col += w * u_col[i];
   }
 
-  outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+  outColor = vec4(clamp(col,0.0,1.0),1.0);
 }
 `;
 
-// ---------------- compile ----------------
-function compile(type, src) {
+function compile(type, src){
   const s = gl.createShader(type);
   gl.shaderSource(s, src);
   gl.compileShader(s);
@@ -64,7 +64,7 @@ gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
 gl.linkProgram(program);
 gl.useProgram(program);
 
-// ---------------- quad ----------------
+// ---------------- QUAD ----------------
 const buf = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, buf);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
@@ -76,125 +76,135 @@ const loc = gl.getAttribLocation(program, "pos");
 gl.enableVertexAttribArray(loc);
 gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
-// ---------------- splats ----------------
-const N = 60;
+// ---------------- SPLATS ----------------
+const N = 80;
 
-let pos = new Float32Array(N * 2);
-let col = new Float32Array(N * 3);
+let pos = new Float32Array(N*2);
+let col = new Float32Array(N*3);
 let sigma = new Float32Array(N);
 let alpha = new Float32Array(N);
 
-for (let i = 0; i < N; i++) {
-  pos[i*2] = Math.random() * 200;
-  pos[i*2+1] = Math.random() * 200;
+for(let i=0;i<N;i++){
+  pos[i*2] = Math.random()*W;
+  pos[i*2+1] = Math.random()*H;
 
-  col[i*3] = Math.random();
-  col[i*3+1] = Math.random();
-  col[i*3+2] = Math.random();
+  col[i*3] = 1;
+  col[i*3+1] = 1;
+  col[i*3+2] = 1;
 
-  sigma[i] = 10 + Math.random() * 15;
-  alpha[i] = 0.5;
+  sigma[i] = 12 + Math.random()*10;
+  alpha[i] = 0.7;
 }
 
-// ---------------- target image ----------------
-// simple circle target
-function target(x, y) {
-  const dx = x - 100;
-  const dy = y - 100;
-  return (dx*dx + dy*dy < 40*40) ? 1 : 0;
+// ---------------- TARGET IMAGE ----------------
+function target(x,y){
+  const dx = x-100;
+  const dy = y-100;
+
+  const r = Math.sqrt(dx*dx + dy*dy);
+
+  // circle + inner hole (more structure = visible learning)
+  if(r < 70 && r > 30) return 1;
+  return 0;
 }
 
-// ---------------- render to CPU buffer ----------------
-function renderCPU() {
-  const img = new Float32Array(200 * 200);
+// ---------------- CPU RENDER ----------------
+function renderCPU(){
+  const img = new Float32Array(W*H);
 
-  for (let y = 0; y < 200; y++) {
-    for (let x = 0; x < 200; x++) {
+  for(let y=0;y<H;y++){
+    for(let x=0;x<W;x++){
 
       let v = 0;
 
-      for (let i = 0; i < N; i++) {
-        const dx = x - pos[i*2];
-        const dy = y - pos[i*2+1];
+      for(let i=0;i<N;i++){
+        const dx = x-pos[i*2];
+        const dy = y-pos[i*2+1];
 
         const d2 = dx*dx + dy*dy;
         const s = sigma[i];
 
-        v += Math.exp(-d2 / (2*s*s)) * alpha[i];
+        v += Math.exp(-d2/(2*s*s))*alpha[i];
       }
 
-      img[y*200 + x] = v;
+      img[y*W+x]=v;
     }
   }
 
   return img;
 }
 
-// ---------------- loss ----------------
-function loss(img) {
-  let L = 0;
+// ---------------- ERROR MAP ----------------
+function errorMap(img){
+  const err = new Float32Array(W*H);
 
-  for (let i = 0; i < img.length; i++) {
-    const x = i % 200;
-    const y = Math.floor(i / 200);
+  for(let i=0;i<img.length;i++){
+    const x = i%W;
+    const y = (i/W)|0;
 
-    const d = img[i] - target(x,y);
-    L += d*d;
+    err[i] = target(x,y) - img[i];
   }
 
-  return L;
+  return err;
 }
 
-// ---------------- GPU upload ----------------
-function upload() {
-  gl.uniform2fv(gl.getUniformLocation(program, "u_pos"), pos);
-  gl.uniform3fv(gl.getUniformLocation(program, "u_col"), col);
-  gl.uniform1fv(gl.getUniformLocation(program, "u_sigma"), sigma);
-  gl.uniform1fv(gl.getUniformLocation(program, "u_alpha"), alpha);
-  gl.uniform1i(gl.getUniformLocation(program, "u_count"), N);
-}
+// ---------------- TRAIN STEP (THIS IS THE KEY) ----------------
+function train(){
+  const img = renderCPU();
+  const err = errorMap(img);
 
-// ---------------- CPU gradient step ----------------
-function trainStep() {
+  // pick a splat
+  const i = (Math.random()*N)|0;
 
-  const baseImg = renderCPU();
-  const baseLoss = loss(baseImg);
+  const px = pos[i*2];
+  const py = pos[i*2+1];
 
-  const i = Math.floor(Math.random() * N);
+  // sample local error around splat
+  let ex = 0, ey = 0, count = 0;
 
-  // pick parameter to perturb
-  const mode = Math.floor(Math.random() * 2);
+  for(let k=0;k<10;k++){
+    const dx = (Math.random()-0.5)*20;
+    const dy = (Math.random()-0.5)*20;
 
-  const eps = 2;
+    const x = Math.floor(px+dx);
+    const y = Math.floor(py+dy);
 
-  let old;
+    if(x<0||x>=W||y<0||y>=H) continue;
 
-  if (mode === 0) {
-    old = pos[i*2];
-    pos[i*2] += eps;
-  } else {
-    old = pos[i*2+1];
-    pos[i*2+1] += eps;
+    const e = err[y*W+x];
+
+    ex += dx * e;
+    ey += dy * e;
+    count++;
   }
 
-  const newLoss = loss(renderCPU());
+  if(count>0){
+    ex/=count;
+    ey/=count;
 
-  // gradient approx
-  const grad = newLoss - baseLoss;
-
-  // update direction
-  if (mode === 0) pos[i*2] = old - grad * 0.01;
-  else pos[i*2+1] = old - grad * 0.01;
+    // 🔥 THIS is what creates visible motion
+    pos[i*2]   += ex * 0.5;
+    pos[i*2+1] += ey * 0.5;
+  }
 }
 
-// ---------------- animation ----------------
-function loop() {
+// ---------------- GPU UPDATE ----------------
+function upload(){
+  gl.uniform2fv(gl.getUniformLocation(program,"u_pos"),pos);
+  gl.uniform3fv(gl.getUniformLocation(program,"u_col"),col);
+  gl.uniform1fv(gl.getUniformLocation(program,"u_sigma"),sigma);
+  gl.uniform1fv(gl.getUniformLocation(program,"u_alpha"),alpha);
+  gl.uniform1i(gl.getUniformLocation(program,"u_count"),N);
+}
 
-  // many tiny learning steps
-  for (let i = 0; i < 5; i++) trainStep();
+// ---------------- LOOP ----------------
+function loop(){
+
+  // 🔥 MANY training steps per frame
+  for(let i=0;i<20;i++) train();
 
   upload();
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  gl.drawArrays(gl.TRIANGLES,0,6);
 
   requestAnimationFrame(loop);
 }
