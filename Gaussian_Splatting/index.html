@@ -86,7 +86,7 @@ function train(){
     const dy = y - pos[i*2+1];
     const influence = Math.exp(-(dx*dx+dy*dy)/(2*sigma[i]*sigma[i]));
 
-    const lr = 0.01 * influence;
+    const lr = 0.2 * influence;
 
     // 🎯 POSITION update (pull toward error)
     pos[i*2]   += dx * (er+eg+eb) * lr;
