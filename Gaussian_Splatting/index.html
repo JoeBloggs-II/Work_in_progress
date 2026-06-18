@@ -1,211 +1,133 @@
-<canvas id="c"></canvas>
+<canvas id="c" width="200" height="200"></canvas>
 
 <script>
 const W = 200, H = 200;
+const N = 60;
+
 const canvas = document.getElementById("c");
-canvas.width = W;
-canvas.height = H;
-
-const gl = canvas.getContext("webgl2");
-
-// ---------------- GPU SHADER ----------------
-const vs = `#version 300 es
-in vec2 pos;
-void main() {
-  gl_Position = vec4(pos, 0.0, 1.0);
-}
-`;
-
-const fs = `#version 300 es
-precision highp float;
-
-out vec4 outColor;
-
-#define N 80
-
-uniform vec2 u_pos[N];
-uniform vec3 u_col[N];
-uniform float u_sigma[N];
-uniform float u_alpha[N];
-uniform int u_count;
-
-float g(float d2, float s){
-  return exp(-d2 / (2.0*s*s));
-}
-
-void main(){
-  vec2 uv = gl_FragCoord.xy;
-
-  vec3 col = vec3(0.0);
-
-  for(int i=0;i<N;i++){
-    if(i>=u_count) break;
-
-    vec2 d = uv - u_pos[i];
-    float w = g(dot(d,d), u_sigma[i]) * u_alpha[i];
-
-    col += w * u_col[i];
-  }
-
-  outColor = vec4(clamp(col,0.0,1.0),1.0);
-}
-`;
-
-function compile(type, src){
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  return s;
-}
-
-const program = gl.createProgram();
-gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
-gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
-gl.linkProgram(program);
-gl.useProgram(program);
-
-// ---------------- QUAD ----------------
-const buf = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-  -1,-1, 1,-1, -1,1,
-  -1,1, 1,-1, 1,1
-]), gl.STATIC_DRAW);
-
-const loc = gl.getAttribLocation(program, "pos");
-gl.enableVertexAttribArray(loc);
-gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-
-// ---------------- SPLATS ----------------
-const N = 80;
+const ctx = canvas.getContext("2d");
 
 let pos = new Float32Array(N*2);
 let col = new Float32Array(N*3);
 let sigma = new Float32Array(N);
 let alpha = new Float32Array(N);
 
-for(let i=0;i<N;i++){
+// ---------------- init ----------------
+for (let i = 0; i < N; i++) {
   pos[i*2] = Math.random()*W;
   pos[i*2+1] = Math.random()*H;
 
-  col[i*3] = 1;
-  col[i*3+1] = 1;
-  col[i*3+2] = 1;
+  col[i*3] = Math.random();
+  col[i*3+1] = Math.random();
+  col[i*3+2] = Math.random();
 
-  sigma[i] = 12 + Math.random()*10;
-  alpha[i] = 0.7;
+  sigma[i] = 10 + Math.random()*10;
+  alpha[i] = 0.6;
 }
 
 // ---------------- TARGET IMAGE ----------------
+// example: coloured circle (RGB gradient)
 function target(x,y){
   const dx = x-100;
   const dy = y-100;
+  const d = Math.sqrt(dx*dx+dy*dy);
 
-  const r = Math.sqrt(dx*dx + dy*dy);
+  if(d < 60){
+    return [
+      1.0,
+      d/60,
+      1.0 - d/60
+    ];
+  }
 
-  // circle + inner hole (more structure = visible learning)
-  if(r < 70 && r > 30) return 1;
-  return 0;
+  return [0,0,0];
 }
 
-// ---------------- CPU RENDER ----------------
-function renderCPU(){
-  const img = new Float32Array(W*H);
+// ---------------- render single pixel ----------------
+function renderPixel(x,y){
+  let r=0,g=0,b=0;
+
+  for(let i=0;i<N;i++){
+    const dx = x-pos[i*2];
+    const dy = y-pos[i*2+1];
+
+    const d2 = dx*dx+dy*dy;
+    const s = sigma[i];
+
+    const w = Math.exp(-d2/(2*s*s))*alpha[i];
+
+    r += w*col[i*3];
+    g += w*col[i*3+1];
+    b += w*col[i*3+2];
+  }
+
+  return [r,g,b];
+}
+
+// ---------------- TRAIN STEP (FAST) ----------------
+function train(){
+  // sample ONLY a few pixels per step
+  for(let t=0;t<5;t++){
+
+    const x = (Math.random()*W)|0;
+    const y = (Math.random()*H)|0;
+
+    const [tr,tg,tb] = target(x,y);
+    let [cr,cg,cb] = renderPixel(x,y);
+
+    const er = tr-cr;
+    const eg = tg-cg;
+    const eb = tb-cb;
+
+    // pick a nearby splat to adjust
+    const i = (Math.random()*N)|0;
+
+    const dx = x - pos[i*2];
+    const dy = y - pos[i*2+1];
+    const influence = Math.exp(-(dx*dx+dy*dy)/(2*sigma[i]*sigma[i]));
+
+    const lr = 0.01 * influence;
+
+    // 🎯 POSITION update (pull toward error)
+    pos[i*2]   += dx * (er+eg+eb) * lr;
+    pos[i*2+1] += dy * (er+eg+eb) * lr;
+
+    // 🎨 COLOUR update (THIS FIXES YOUR ISSUE)
+    col[i*3]   += er * lr;
+    col[i*3+1] += eg * lr;
+    col[i*3+2] += eb * lr;
+
+    // clamp colour
+    col[i*3]   = Math.max(0,Math.min(1,col[i*3]));
+    col[i*3+1] = Math.max(0,Math.min(1,col[i*3+1]));
+    col[i*3+2] = Math.max(0,Math.min(1,col[i*3+2]));
+  }
+}
+
+// ---------------- FULL RENDER ----------------
+function draw(){
+  const img = ctx.createImageData(W,H);
 
   for(let y=0;y<H;y++){
     for(let x=0;x<W;x++){
 
-      let v = 0;
+      const [r,g,b] = renderPixel(x,y);
 
-      for(let i=0;i<N;i++){
-        const dx = x-pos[i*2];
-        const dy = y-pos[i*2+1];
-
-        const d2 = dx*dx + dy*dy;
-        const s = sigma[i];
-
-        v += Math.exp(-d2/(2*s*s))*alpha[i];
-      }
-
-      img[y*W+x]=v;
+      const i = (y*W+x)*4;
+      img.data[i] = Math.min(255,r*255);
+      img.data[i+1] = Math.min(255,g*255);
+      img.data[i+2] = Math.min(255,b*255);
+      img.data[i+3] = 255;
     }
   }
 
-  return img;
-}
-
-// ---------------- ERROR MAP ----------------
-function errorMap(img){
-  const err = new Float32Array(W*H);
-
-  for(let i=0;i<img.length;i++){
-    const x = i%W;
-    const y = (i/W)|0;
-
-    err[i] = target(x,y) - img[i];
-  }
-
-  return err;
-}
-
-// ---------------- TRAIN STEP (THIS IS THE KEY) ----------------
-function train(){
-  const img = renderCPU();
-  const err = errorMap(img);
-
-  // pick a splat
-  const i = (Math.random()*N)|0;
-
-  const px = pos[i*2];
-  const py = pos[i*2+1];
-
-  // sample local error around splat
-  let ex = 0, ey = 0, count = 0;
-
-  for(let k=0;k<10;k++){
-    const dx = (Math.random()-0.5)*20;
-    const dy = (Math.random()-0.5)*20;
-
-    const x = Math.floor(px+dx);
-    const y = Math.floor(py+dy);
-
-    if(x<0||x>=W||y<0||y>=H) continue;
-
-    const e = err[y*W+x];
-
-    ex += dx * e;
-    ey += dy * e;
-    count++;
-  }
-
-  if(count>0){
-    ex/=count;
-    ey/=count;
-
-    // 🔥 THIS is what creates visible motion
-    pos[i*2]   += ex * 0.5;
-    pos[i*2+1] += ey * 0.5;
-  }
-}
-
-// ---------------- GPU UPDATE ----------------
-function upload(){
-  gl.uniform2fv(gl.getUniformLocation(program,"u_pos"),pos);
-  gl.uniform3fv(gl.getUniformLocation(program,"u_col"),col);
-  gl.uniform1fv(gl.getUniformLocation(program,"u_sigma"),sigma);
-  gl.uniform1fv(gl.getUniformLocation(program,"u_alpha"),alpha);
-  gl.uniform1i(gl.getUniformLocation(program,"u_count"),N);
+  ctx.putImageData(img,0,0);
 }
 
 // ---------------- LOOP ----------------
 function loop(){
-
-  // 🔥 MANY training steps per frame
-  for(let i=0;i<20;i++) train();
-
-  upload();
-  gl.drawArrays(gl.TRIANGLES,0,6);
-
+  train();
+  draw();
   requestAnimationFrame(loop);
 }
 
