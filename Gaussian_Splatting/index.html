@@ -2,12 +2,12 @@
 
 <script>
 const canvas = document.getElementById("c");
-canvas.width = 400;
-canvas.height = 400;
+canvas.width = 200;
+canvas.height = 200;
 
 const gl = canvas.getContext("webgl2");
 
-// -------------------- Vertex Shader --------------------
+// ---------------- GPU SHADER ----------------
 const vs = `#version 300 es
 in vec2 pos;
 void main() {
@@ -15,24 +15,21 @@ void main() {
 }
 `;
 
-// -------------------- Fragment Shader --------------------
 const fs = `#version 300 es
 precision highp float;
 
 out vec4 outColor;
 
-uniform vec2 u_resolution;
+#define N 60
 
-// up to 100 splats
-#define N 100
 uniform vec2 u_pos[N];
 uniform vec3 u_col[N];
 uniform float u_sigma[N];
 uniform float u_alpha[N];
 uniform int u_count;
 
-float gaussian(float d2, float sigma) {
-  return exp(-d2 / (2.0 * sigma * sigma));
+float gauss(float d2, float s) {
+  return exp(-d2 / (2.0 * s * s));
 }
 
 void main() {
@@ -44,17 +41,16 @@ void main() {
     if (i >= u_count) break;
 
     vec2 d = uv - u_pos[i];
-    float w = gaussian(dot(d,d), u_sigma[i]) * u_alpha[i];
+    float w = gauss(dot(d,d), u_sigma[i]) * u_alpha[i];
 
     col += w * u_col[i];
   }
 
-  col = clamp(col, 0.0, 1.0);
-  outColor = vec4(col, 1.0);
+  outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 `;
 
-// -------------------- Compile helpers --------------------
+// ---------------- compile ----------------
 function compile(type, src) {
   const s = gl.createShader(type);
   gl.shaderSource(s, src);
@@ -68,67 +64,140 @@ gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
 gl.linkProgram(program);
 gl.useProgram(program);
 
-// -------------------- Fullscreen quad --------------------
-const buffer = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+// ---------------- quad ----------------
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-  -1,-1,  1,-1, -1, 1,
-  -1, 1,  1,-1,  1, 1
+  -1,-1, 1,-1, -1,1,
+  -1,1, 1,-1, 1,1
 ]), gl.STATIC_DRAW);
 
 const loc = gl.getAttribLocation(program, "pos");
 gl.enableVertexAttribArray(loc);
 gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
-// -------------------- Splats --------------------
-const N = 80;
+// ---------------- splats ----------------
+const N = 60;
 
-const pos = new Float32Array(N * 2);
-const col = new Float32Array(N * 3);
-const sigma = new Float32Array(N);
-const alpha = new Float32Array(N);
+let pos = new Float32Array(N * 2);
+let col = new Float32Array(N * 3);
+let sigma = new Float32Array(N);
+let alpha = new Float32Array(N);
 
 for (let i = 0; i < N; i++) {
-  pos[i*2+0] = Math.random() * 400;
-  pos[i*2+1] = Math.random() * 400;
+  pos[i*2] = Math.random() * 200;
+  pos[i*2+1] = Math.random() * 200;
 
-  col[i*3+0] = Math.random();
+  col[i*3] = Math.random();
   col[i*3+1] = Math.random();
   col[i*3+2] = Math.random();
 
-  sigma[i] = 20 + Math.random() * 30;
-  alpha[i] = 0.4 + Math.random() * 0.6;
+  sigma[i] = 10 + Math.random() * 15;
+  alpha[i] = 0.5;
 }
 
-// -------------------- uniforms --------------------
-const u_pos = gl.getUniformLocation(program, "u_pos");
-const u_col = gl.getUniformLocation(program, "u_col");
-const u_sigma = gl.getUniformLocation(program, "u_sigma");
-const u_alpha = gl.getUniformLocation(program, "u_alpha");
-const u_count = gl.getUniformLocation(program, "u_count");
+// ---------------- target image ----------------
+// simple circle target
+function target(x, y) {
+  const dx = x - 100;
+  const dy = y - 100;
+  return (dx*dx + dy*dy < 40*40) ? 1 : 0;
+}
 
-// -------------------- animation --------------------
-function updateCPU() {
-  // tiny “learning-like” motion
-  for (let i = 0; i < N; i++) {
-    pos[i*2]   += (Math.random() - 0.5) * 0.5;
-    pos[i*2+1] += (Math.random() - 0.5) * 0.5;
+// ---------------- render to CPU buffer ----------------
+function renderCPU() {
+  const img = new Float32Array(200 * 200);
+
+  for (let y = 0; y < 200; y++) {
+    for (let x = 0; x < 200; x++) {
+
+      let v = 0;
+
+      for (let i = 0; i < N; i++) {
+        const dx = x - pos[i*2];
+        const dy = y - pos[i*2+1];
+
+        const d2 = dx*dx + dy*dy;
+        const s = sigma[i];
+
+        v += Math.exp(-d2 / (2*s*s)) * alpha[i];
+      }
+
+      img[y*200 + x] = v;
+    }
   }
+
+  return img;
 }
 
-function render() {
-  updateCPU();
+// ---------------- loss ----------------
+function loss(img) {
+  let L = 0;
 
-  gl.uniform2fv(u_pos, pos);
-  gl.uniform3fv(u_col, col);
-  gl.uniform1fv(u_sigma, sigma);
-  gl.uniform1fv(u_alpha, alpha);
-  gl.uniform1i(u_count, N);
+  for (let i = 0; i < img.length; i++) {
+    const x = i % 200;
+    const y = Math.floor(i / 200);
 
+    const d = img[i] - target(x,y);
+    L += d*d;
+  }
+
+  return L;
+}
+
+// ---------------- GPU upload ----------------
+function upload() {
+  gl.uniform2fv(gl.getUniformLocation(program, "u_pos"), pos);
+  gl.uniform3fv(gl.getUniformLocation(program, "u_col"), col);
+  gl.uniform1fv(gl.getUniformLocation(program, "u_sigma"), sigma);
+  gl.uniform1fv(gl.getUniformLocation(program, "u_alpha"), alpha);
+  gl.uniform1i(gl.getUniformLocation(program, "u_count"), N);
+}
+
+// ---------------- CPU gradient step ----------------
+function trainStep() {
+
+  const baseImg = renderCPU();
+  const baseLoss = loss(baseImg);
+
+  const i = Math.floor(Math.random() * N);
+
+  // pick parameter to perturb
+  const mode = Math.floor(Math.random() * 2);
+
+  const eps = 2;
+
+  let old;
+
+  if (mode === 0) {
+    old = pos[i*2];
+    pos[i*2] += eps;
+  } else {
+    old = pos[i*2+1];
+    pos[i*2+1] += eps;
+  }
+
+  const newLoss = loss(renderCPU());
+
+  // gradient approx
+  const grad = newLoss - baseLoss;
+
+  // update direction
+  if (mode === 0) pos[i*2] = old - grad * 0.01;
+  else pos[i*2+1] = old - grad * 0.01;
+}
+
+// ---------------- animation ----------------
+function loop() {
+
+  // many tiny learning steps
+  for (let i = 0; i < 5; i++) trainStep();
+
+  upload();
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-  requestAnimationFrame(render);
+  requestAnimationFrame(loop);
 }
 
-render();
+loop();
 </script>
