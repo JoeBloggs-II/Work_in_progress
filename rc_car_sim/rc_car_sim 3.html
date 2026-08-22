@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>RC Telemetry — Physics-Accurate RC Car Sim</title>
+<style>
+  :root{
+    --bg:#0c0e10;
+    --panel:#14171acc;
+    --panel-solid:#14171a;
+    --hair:#2a2e33;
+    --accent:#ff7a1a;
+    --accent-dim:#ff7a1a55;
+    --good:#39d98a;
+    --warn:#ffcc4d;
+    --bad:#ff4d4d;
+    --text:#e8e6e1;
+    --muted:#8a8f94;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Consolas", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;width:100%;height:100%;background:var(--bg);overflow:hidden;font-family:var(--sans);color:var(--text);}
+  #c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;}
+
+  .panel{
+    position:fixed;background:var(--panel);border:1px solid var(--hair);
+    border-top:2px solid var(--accent);backdrop-filter:blur(10px);
+    border-radius:6px;padding:12px 14px;z-index:5;
+  }
+  .eyebrow{
+    font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+    margin:0 0 8px 0;font-weight:600;
+  }
+  #hud{top:14px;left:14px;width:270px;}
+  #controls{top:14px;right:14px;width:230px;}
+  #status{bottom:14px;left:14px;font-size:11px;color:var(--muted);font-family:var(--mono);}
+  #hint{bottom:14px;right:14px;font-size:11px;color:var(--muted);text-align:right;max-width:260px;}
+
+  .big-readout{display:flex;align-items:baseline;gap:6px;margin-bottom:10px;}
+  .big-readout .num{font-family:var(--mono);font-size:34px;font-weight:600;color:var(--text);line-height:1;}
+  .big-readout .unit{font-size:12px;color:var(--muted);}
+
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-bottom:10px;}
+  .stat{font-family:var(--mono);font-size:12px;}
+  .stat .label{color:var(--muted);font-size:9px;letter-spacing:.06em;text-transform:uppercase;display:block;margin-bottom:1px;}
+  .stat .val{color:var(--text);}
+  .stat .val.accent{color:var(--accent);}
+
+  .grip-map{display:grid;grid-template-columns:1fr 1fr;gap:5px;width:90px;margin:6px auto 4px;}
+  .grip-cell{
+    aspect-ratio:1/1.3;border-radius:3px;background:#2a2e33;
+    border:1px solid #3a3f45;transition:background .08s linear, transform .08s linear;
+  }
+
+  .airborne-flag{
+    text-align:center;font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+    color:var(--bad);opacity:0;transition:opacity .15s;font-weight:700;margin-top:6px;
+  }
+  .airborne-flag.show{opacity:1;}
+
+  .hairline{border:none;border-top:1px solid var(--hair);margin:10px 0;}
+
+  .ctrl-row{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin:8px 0 3px;font-family:var(--mono);}
+  .ctrl-row b{color:var(--text);}
+  input[type=range]{
+    width:100%;-webkit-appearance:none;appearance:none;height:3px;background:var(--hair);
+    border-radius:2px;outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;width:12px;height:12px;border-radius:50%;
+    background:var(--accent);cursor:pointer;border:2px solid #0c0e10;
+  }
+  .legend{font-size:11px;color:var(--muted);line-height:1.7;font-family:var(--mono);}
+  .legend b{color:var(--text);font-weight:600;}
+  .key{display:inline-block;min-width:16px;padding:0 4px;border:1px solid var(--hair);border-radius:3px;
+       background:#1e2226;font-size:10px;color:var(--text);text-align:center;margin-right:3px;}
+
+  #loading{
+    position:fixed;inset:0;background:var(--bg);z-index:50;display:flex;align-items:center;
+    justify-content:center;flex-direction:column;gap:10px;transition:opacity .4s;
+  }
+  #loading .spin{width:34px;height:34px;border-radius:50%;border:2px solid var(--hair);
+       border-top-color:var(--accent);animation:spin 0.9s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  #loading .msg{font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.05em;}
+  #errbox{
+    position:fixed;inset:0;background:var(--bg);z-index:60;display:none;align-items:center;justify-content:center;
+    padding:40px;text-align:center;font-family:var(--mono);color:var(--bad);white-space:pre-wrap;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="loading">
+  <div class="spin"></div>
+  <div class="msg" id="loadingMsg">Requesting GPU adapter…</div>
+</div>
+<div id="errbox"></div>
+
+<div class="panel" id="hud">
+  <p class="eyebrow">Telemetry</p>
+  <div class="big-readout"><span class="num" id="speedNum">0</span><span class="unit">km/h</span></div>
+  <div class="stat-grid">
+    <div class="stat"><span class="label">Wheel RPM</span><span class="val" id="wheelRpm">0</span></div>
+    <div class="stat"><span class="label">Motor RPM</span><span class="val" id="motorRpm">0</span></div>
+    <div class="stat"><span class="label">Drag Force</span><span class="val" id="dragForce">0.0 N</span></div>
+    <div class="stat"><span class="label">Downforce</span><span class="val" id="liftForce">0.0 N</span></div>
+    <div class="stat"><span class="label">Gyro Torque</span><span class="val accent" id="gyroTorque">0.00 N·m</span></div>
+    <div class="stat"><span class="label">G-Force</span><span class="val" id="gForce">0.00 g</span></div>
+  </div>
+  <hr class="hairline">
+  <p class="eyebrow" style="margin-bottom:4px;">Grip map</p>
+  <div class="grip-map">
+    <div class="grip-cell" id="gFL"></div><div class="grip-cell" id="gFR"></div>
+    <div class="grip-cell" id="gRL"></div><div class="grip-cell" id="gRR"></div>
+  </div>
+  <div class="airborne-flag" id="airFlag">✈ AIRBORNE — WHEELS FREE-SPINNING</div>
+</div>
+
+<div class="panel" id="controls">
+  <p class="eyebrow">Setup</p>
+  <div class="legend">
+    <span class="key">W</span><span class="key">S</span> throttle / brake<br>
+    <span class="key">A</span><span class="key">D</span> steer<br>
+    <span class="key">Space</span> handbrake<br>
+    <span class="key">R</span> reset car<br>
+    drag mouse — orbit camera
+  </div>
+  <div class="ctrl-row">Gyroscopic strength <b id="gyroVal">1.0×</b></div>
+  <input type="range" id="gyroSlider" min="0" max="4" step="0.25" value="1">
+  <div class="ctrl-row">Crosswind <b id="windVal">0.0 m/s</b></div>
+  <input type="range" id="windSlider" min="-8" max="8" step="0.5" value="0">
+  <hr class="hairline">
+  <p class="eyebrow" style="margin-bottom:2px;">About the physics</p>
+  <div class="legend" style="font-size:10px;line-height:1.6;">
+    RaycastVehicle suspension/tire contact (Cannon.js) + a hand-rolled DC-motor torque curve,
+    per-wheel rotational inertia, quadratic windage drag, drag/lift aero, and gyroscopic
+    precession coupling (τ = −Ω×L) applied to the chassis. Gyro is exaggerated above 1× for
+    visibility — real magnitude at this scale is subtle. Airflow visualization is a stylized
+    particle advection, not a CFD solve.
+  </div>
+</div>
+
+<div id="status">Backend: detecting…</div>
+<div id="hint">1:10-scale RC buggy · 2.6 kg · 4WD · fixed 120 Hz physics</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.185.1/three.webgpu.js",
+    "three/webgpu": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.185.1/three.webgpu.js",
+    "three/tsl": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.185.1/three.tsl.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import * as TSL from "three/tsl";
+
+const loadingEl = document.getElementById('loading');
+const loadingMsg = document.getElementById('loadingMsg');
+const errEl = document.getElementById('errbox');
+function fatal(msg, err){
+  console.error(msg, err);
+  loadingEl.style.display='none';
+  errEl.style.display='flex';
+  errEl.textContent = msg + (err ? ('\n\n'+(err.stack||err.message||err)) : '');
+}
+
+try{
+  main();
+}catch(e){ fatal('Failed to start simulation.', e); }
+
+async function main(){
+
+// ============================================================================
+// PHYSICAL CONSTANTS — approximate 1:10-scale electric RC buggy
+// ============================================================================
+const GRAVITY          = -9.81;
+const AIR_DENSITY       = 1.225;      // kg/m^3, sea level
+const MASS              = 2.6;        // kg, full chassis incl. battery
+const CG_HEIGHT         = 0.06;       // m, center-of-gravity height above ground
+
+const HALF_WHEELBASE    = 0.13;       // m  (wheelbase 0.26 m)
+const HALF_TRACK        = 0.095;      // m  (track width 0.19 m)
+const WHEEL_RADIUS      = 0.055;      // m
+const WHEEL_WIDTH       = 0.045;      // m
+const SUSP_REST         = 0.055;      // m
+const SUSP_TRAVEL       = 0.06;       // m
+
+const I_WHEEL           = 1.2e-4;     // kg*m^2, wheel+rim moment of inertia (solid-disk approx)
+const PEAK_TORQUE       = 0.95;       // N*m per driven wheel, stall torque post-gearbox
+const FREE_SPIN_OMEGA   = 380;        // rad/s, wheel speed at zero load (~20.9 m/s wheel-limited top speed)
+const WINDAGE_COEF      = 4.2e-6;     // N*m per (rad/s)^2, aerodynamic drag on spinning wheel
+const ROLL_RESIST_TORQUE= 0.028;      // N*m, constant rolling resistance
+const BRAKE_TORQUE_MAX  = 3.2;        // N*m per wheel
+const TIRE_MU           = 1.3;        // tire-road friction coefficient (used for slip decision)
+
+const CD                = 0.9;        // drag coefficient, boxy RC body
+const FRONTAL_AREA      = 0.033;      // m^2
+const CL                = 0.35;       // lift coefficient (simplified, small)
+
+const STEER_MAX         = 0.42;       // rad (~24 deg)
+const GEAR_RATIO         = 8.5;       // wheel->motor gearing, cosmetic RPM display only
+
+const FIXED_DT = 1/120;
+
+// ============================================================================
+// RENDERER  (WebGPU with automatic WebGL2 fallback, both handled by three.js)
+// ============================================================================
+loadingMsg.textContent = 'Initializing renderer…';
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGPURenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+await renderer.init();
+try{
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+}catch(e){ /* non-fatal */ }
+
+const usingWebGPU = !!(renderer.backend && renderer.backend.isWebGPUBackend);
+document.getElementById('status').textContent = 'Backend: ' + (usingWebGPU ? 'WebGPU' : 'WebGL2 (fallback)');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fb8d9);
+scene.fog = new THREE.Fog(0x8fb8d9, 25, 140);
+
+const camera = new THREE.PerspectiveCamera(58, window.innerWidth/window.innerHeight, 0.02, 500);
+camera.position.set(0, 1.2, -2);
+
+window.addEventListener('resize', ()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---- lighting ----
+const hemi = new THREE.HemisphereLight(0xbcd7ff, 0x33301f, 0.9);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff3de, 2.4);
+sun.position.set(8, 14, -6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=-12; sun.shadow.camera.right=12;
+sun.shadow.camera.top=12; sun.shadow.camera.bottom=-12;
+sun.shadow.camera.near=1; sun.shadow.camera.far=40;
+sun.shadow.bias=-0.0015;
+scene.add(sun);
+scene.add(sun.target);
+
+// ---- ground texture (procedural canvas grid, no external assets) ----
+function makeGroundTexture(){
+  const c = document.createElement('canvas'); c.width=c.height=512;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#3b4046'; ctx.fillRect(0,0,512,512);
+  ctx.fillStyle = 'rgba(255,255,255,0.025)';
+  for(let i=0;i<400;i++){ ctx.fillRect(Math.random()*512, Math.random()*512, 2, 2); }
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 2;
+  for(let i=0;i<=512;i+=32){
+    ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,512); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(512,i); ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(50,50);
+  tex.anisotropy = 4;
+  return tex;
+}
+const groundMat = new THREE.MeshStandardMaterial({ map: makeGroundTexture(), roughness:0.95, metalness:0.0 });
+const groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(400,400), groundMat);
+groundMesh.rotation.x = -Math.PI/2;
+groundMesh.receiveShadow = true;
+scene.add(groundMesh);
+
+// ============================================================================
+// PHYSICS WORLD
+// ============================================================================
+loadingMsg.textContent = 'Building physics world…';
+const world = new CANNON.World();
+world.gravity.set(0, GRAVITY, 0);
+world.broadphase = new CANNON.SAPBroadphase(world);
+world.solver.iterations = 12;
+world.defaultContactMaterial.friction = 0.4;
+
+const groundBody = new CANNON.Body({ mass:0, shape: new CANNON.Plane() });
+groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1,0,0), -Math.PI/2);
+world.addBody(groundBody);
+
+// ---- ramp (static box, angled) ----
+function addRamp(x,z, angleDeg, length, width, thickness, color){
+  const angle = THREE.MathUtils.degToRad(angleDeg);
+  const hx = length/2, hy = thickness/2, hz = width/2;
+  const shape = new CANNON.Box(new CANNON.Vec3(hx,hy,hz));
+  const body = new CANNON.Body({ mass:0, shape });
+  const riseHeight = Math.sin(angle)*hx;
+  body.position.set(x, riseHeight*0.55, z);
+  body.quaternion.setFromAxisAngle(new CANNON.Vec3(0,0,1), angle);
+  world.addBody(body);
+
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(length,thickness,width),
+    new THREE.MeshStandardMaterial({ color, roughness:0.8 })
+  );
+  mesh.position.copy(body.position);
+  mesh.quaternion.copy(body.quaternion);
+  mesh.castShadow = mesh.receiveShadow = true;
+  scene.add(mesh);
+  return {body,mesh};
+}
+addRamp(6, 0, 14, 3.2, 2.2, 0.08, 0x555b62);
+addRamp(-8, 3, 180-11, 3.0, 2.2, 0.08, 0x555b62);
+
+// ---- track cones for scale/reference ----
+const coneGeo = new THREE.ConeGeometry(0.09, 0.24, 10);
+const coneMat = new THREE.MeshStandardMaterial({ color:0xff5a1f, roughness:0.7 });
+for(let i=0;i<14;i++){
+  const c = new THREE.Mesh(coneGeo, coneMat);
+  const t = i/13;
+  c.position.set(-16 + t*34, 0.12, 3.6 + Math.sin(t*6.0)*2.4);
+  c.castShadow = true;
+  scene.add(c);
+}
+
+// ============================================================================
+// VEHICLE
+// ============================================================================
+const chassisShape = new CANNON.Box(new CANNON.Vec3(0.19, 0.05, 0.10));
+const chassisBody = new CANNON.Body({ mass: MASS });
+chassisBody.addShape(chassisShape);
+chassisBody.position.set(0, 0.25, 0);
+chassisBody.angularVelocity.set(0,0,0);
+chassisBody.angularDamping = 0.35;
+// chassisBody is intentionally NOT added to the world here — RaycastVehicle.addToWorld()
+// below adds it internally. Adding it twice corrupts the solver's per-body bookkeeping
+// (this was the cause of the chassis sinking and drive force doing nothing).
+
+const vehicleOptions = {
+  radius: WHEEL_RADIUS,
+  directionLocal: new CANNON.Vec3(0,-1,0),
+  suspensionStiffness: 200,
+  suspensionRestLength: SUSP_REST,
+  frictionSlip: 1.4,
+  dampingRelaxation: 4.5,
+  dampingCompression: 9,
+  maxSuspensionForce: 6000,
+  rollInfluence: 0.02,
+  axleLocal: new CANNON.Vec3(0,0,1),
+  chassisConnectionPointLocal: new CANNON.Vec3(),
+  maxSuspensionTravel: SUSP_TRAVEL,
+  customSlidingRotationalSpeed: -40,
+  useCustomSlidingRotationalSpeed: true
+};
+
+const vehicle = new CANNON.RaycastVehicle({ chassisBody: chassisBody });
+
+// wheel order: 0 FL, 1 FR, 2 RL, 3 RR   (local: X=forward, Y=up, Z=right)
+const susY = -0.015;
+const corners = [
+  [ HALF_WHEELBASE, susY, -HALF_TRACK], // FL
+  [ HALF_WHEELBASE, susY,  HALF_TRACK], // FR
+  [-HALF_WHEELBASE, susY, -HALF_TRACK], // RL
+  [-HALF_WHEELBASE, susY,  HALF_TRACK], // RR
+];
+for(const c of corners){
+  vehicleOptions.chassisConnectionPointLocal.set(c[0],c[1],c[2]);
+  vehicle.addWheel(vehicleOptions);
+}
+vehicle.addToWorld(world);
+
+// ---- car visual meshes ----
+const bodyMat = new THREE.MeshStandardMaterial({ color:0xff7a1a, roughness:0.45, metalness:0.15 });
+const chassisMesh = new THREE.Mesh(new THREE.BoxGeometry(0.38,0.10,0.20), bodyMat);
+chassisMesh.castShadow = true;
+scene.add(chassisMesh);
+const canopyMesh = new THREE.Mesh(
+  new THREE.BoxGeometry(0.18,0.07,0.16),
+  new THREE.MeshStandardMaterial({ color:0x14171a, roughness:0.3, metalness:0.2 })
+);
+canopyMesh.position.set(-0.02,0.085,0);
+canopyMesh.castShadow = true;
+chassisMesh.add(canopyMesh);
+
+const wheelGeo = new THREE.CylinderGeometry(WHEEL_RADIUS, WHEEL_RADIUS, WHEEL_WIDTH, 22);
+wheelGeo.rotateX(Math.PI/2); // align cylinder axis with local Z (lateral / axle direction)
+const wheelMat = new THREE.MeshStandardMaterial({ color:0x1a1c1e, roughness:0.85 });
+const hubMat = new THREE.MeshStandardMaterial({ color:0xcfd3d6, roughness:0.4, metalness:0.6 });
+const wheelMeshes = [];
+for(let i=0;i<4;i++){
+  const w = new THREE.Mesh(wheelGeo, wheelMat);
+  w.castShadow = true;
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(WHEEL_RADIUS*0.35, WHEEL_RADIUS*0.35, WHEEL_WIDTH*1.02, 8), hubMat);
+  hub.rotation.x = Math.PI/2;
+  w.add(hub);
+  scene.add(w);
+  wheelMeshes.push(w);
+}
+
+// ============================================================================
+// PER-WHEEL DYNAMICS STATE  (custom layer on top of RaycastVehicle)
+// ============================================================================
+const omega = [0,0,0,0];          // rad/s, tracked wheel spin (independent rotational DOF)
+const spinAngle = [0,0,0,0];      // rad, integrated visual spin angle
+const contact = [true,true,true,true];
+const normalLoad = [MASS*9.81/4, MASS*9.81/4, MASS*9.81/4, MASS*9.81/4];
+const slipRatio = [0,0,0,0];
+let steerAngle = 0;
+let lastVel = new CANNON.Vec3();
+let lastGyroMag = 0;
+
+const _v1 = new CANNON.Vec3(), _v2 = new CANNON.Vec3(), _v3 = new CANNON.Vec3();
+const raycastFrom = new CANNON.Vec3(), raycastTo = new CANNON.Vec3();
+
+function wheelInContact(from, to){
+  try{
+    const result = new CANNON.RaycastResult();
+    world.raycastClosest(from, to, {}, result);
+    return !!result.hasHit;
+  }catch(e){ return true; } // defensive fallback
+}
+
+function motorTorqueCurve(throttle, w){
+  // simplified linear DC-motor model: torque falls off linearly with speed toward free-spin RPM
+  if (throttle === 0) return 0;
+  const dir = Math.sign(throttle);
+  const wAbs = Math.abs(w);
+  const headroom = Math.max(0, 1 - wAbs/FREE_SPIN_OMEGA);
+  // if wheel already spinning opposite to commanded direction, full torque available (no back-EMF limit)
+  const sameDirection = Math.sign(w) === dir || wAbs < 1e-3;
+  const factor = sameDirection ? headroom : 1;
+  return dir * Math.abs(throttle) * PEAK_TORQUE * factor;
+}
+
+// input state
+const keys = {};
+window.addEventListener('keydown', e=>{ keys[e.code]=true; if(e.code==='Space') e.preventDefault(); });
+window.addEventListener('keyup',   e=>{ keys[e.code]=false; });
+
+function resetCar(){
+  chassisBody.position.set(0, 0.25, -4);
+  chassisBody.quaternion.set(0,0,0,1);
+  chassisBody.velocity.set(0,0,0);
+  chassisBody.angularVelocity.set(0,0,0);
+  chassisBody.force.set(0,0,0);
+  chassisBody.torque.set(0,0,0);
+  for(let i=0;i<4;i++){ omega[i]=0; spinAngle[i]=0; }
+}
+resetCar();
+
+// ---- physics preStep: motor torque, aero, gyroscopic coupling ----
+let gyroMultiplier = 1.0;
+let windX = 0;
+
+world.addEventListener('preStep', function(){
+ try{
+  const dt = world.dt || FIXED_DT;
+
+  // ---- steering (smoothed) ----
+  const steerInput = ((keys['KeyA']||keys['ArrowLeft'])?1:0) - ((keys['KeyD']||keys['ArrowRight'])?1:0);
+  const steerTarget = steerInput * STEER_MAX;
+  steerAngle += (steerTarget - steerAngle) * Math.min(1, dt*9);
+  vehicle.setSteeringValue(steerAngle, 0);
+  vehicle.setSteeringValue(steerAngle, 1);
+
+  const throttleInput = (keys['KeyW']||keys['ArrowUp']) ? 1 : ((keys['KeyS']||keys['ArrowDown']) ? -1 : 0);
+  const brakeInput = keys['Space'] ? 1 : 0;
+
+  // ---- chassis basis vectors ----
+  const q = chassisBody.quaternion;
+  q.vmult(new CANNON.Vec3(1,0,0), _v1); const forwardW = _v1.clone();
+  q.vmult(new CANNON.Vec3(0,0,1), _v2); const rightW = _v2.clone();
+  q.vmult(new CANNON.Vec3(0,1,0), _v3); const upW = _v3.clone();
+
+  // ---- weight transfer (simple longitudinal + lateral) ----
+  const accel = chassisBody.velocity.vsub(lastVel).scale(1/Math.max(dt,1e-4));
+  lastVel.copy(chassisBody.velocity);
+  const aForward = accel.dot(forwardW);
+  const aLateral = accel.dot(rightW);
+  const L = 2*HALF_WHEELBASE, Tw = 2*HALF_TRACK;
+  const dLong = (MASS*aForward*CG_HEIGHT)/(2*L);
+  const dLat  = (MASS*aLateral*CG_HEIGHT)/(2*Tw);
+  const staticLoad = MASS*9.81/4;
+  normalLoad[0] = Math.max(3, staticLoad - dLong - dLat); // FL
+  normalLoad[1] = Math.max(3, staticLoad - dLong + dLat); // FR
+  normalLoad[2] = Math.max(3, staticLoad + dLong - dLat); // RL
+  normalLoad[3] = Math.max(3, staticLoad + dLong + dLat); // RR
+
+  // ---- per-wheel torque / omega integration / gyro accumulation ----
+  let Lx=0, Ly=0, Lz=0; // total wheel angular momentum, world space
+
+  for(let i=0;i<4;i++){
+    const isFront = i<2;
+    let fwdLocal, axleLocal;
+    if (isFront){
+      const cs = Math.cos(steerAngle), sn = Math.sin(steerAngle);
+      fwdLocal  = new CANNON.Vec3(cs, 0, -sn);
+      axleLocal = new CANNON.Vec3(sn, 0, cs);
+    } else {
+      fwdLocal  = new CANNON.Vec3(1,0,0);
+      axleLocal = new CANNON.Vec3(0,0,1);
+    }
+    const fwdW = new CANNON.Vec3(); q.vmult(fwdLocal, fwdW);
+    const axW  = new CANNON.Vec3(); q.vmult(axleLocal, axW);
+
+    // wheel world position (approx, ignoring suspension compression for this calc)
+    const conn = corners[i];
+    const connLocal = new CANNON.Vec3(conn[0], conn[1], conn[2]);
+    const connW = new CANNON.Vec3(); q.vmult(connLocal, connW);
+    const wheelPosW = chassisBody.position.vadd(connW);
+
+    // ground contact via short raycast
+    // start the ray BELOW the chassis box's own bottom face (0.05 half-height + margin) so it
+    // doesn't immediately self-intersect the chassis collider and always report "in contact"
+    const downW = new CANNON.Vec3(); q.vmult(new CANNON.Vec3(0,-1,0), downW);
+    raycastFrom.copy(wheelPosW).vadd(downW.scale(0.065), raycastFrom);
+    raycastTo.copy(wheelPosW).vadd(downW.scale(SUSP_REST+SUSP_TRAVEL+WHEEL_RADIUS+0.08), raycastTo);
+    contact[i] = wheelInContact(raycastFrom, raycastTo);
+
+    // ground-contact-point velocity, projected on wheel forward
+    const relPos = wheelPosW.vsub(chassisBody.position);
+    const wheelVel = chassisBody.velocity.vadd(chassisBody.angularVelocity.cross(relPos));
+    const groundSpeed = wheelVel.dot(fwdW);
+
+    // ---- torque budget ----
+    const wAbs = Math.abs(omega[i]);
+    const motorT = motorTorqueCurve(throttleInput, omega[i]);
+    const brakeT = brakeInput * BRAKE_TORQUE_MAX * Math.sign(omega[i]); // no `||1` fallback: 0 speed -> 0 brake torque
+    const windageT = WINDAGE_COEF * omega[i] * wAbs;
+    const rollT = wAbs > 0.05 ? ROLL_RESIST_TORQUE * Math.sign(omega[i]) : 0;
+    const netT = motorT - brakeT - windageT - rollT;
+
+    let engineForce = 0;
+
+    if (contact[i]){
+      const noSlipOmega = groundSpeed / WHEEL_RADIUS;
+      const maxStaticTorque = TIRE_MU * normalLoad[i] * WHEEL_RADIUS;
+      if (Math.abs(netT) <= maxStaticTorque){
+        omega[i] += (noSlipOmega - omega[i]) * Math.min(1, dt*35);
+        engineForce = netT / WHEEL_RADIUS;
+      } else {
+        // slipping: kinetic friction is what's actually transmitted to the chassis; any torque
+        // beyond that just spins the wheel itself up (or down) rather than driving the car harder
+        const slipSign = Math.sign(omega[i]-noSlipOmega) || Math.sign(netT) || 1;
+        const kineticTorque = maxStaticTorque * 0.85 * slipSign;
+        const angAccel = (netT - kineticTorque) / I_WHEEL;
+        omega[i] += angAccel * dt;
+        engineForce = kineticTorque / WHEEL_RADIUS;
+      }
+      slipRatio[i] = (omega[i]*WHEEL_RADIUS - groundSpeed) / Math.max(Math.abs(groundSpeed), 0.6);
+    } else {
+      // airborne: wheel free-spins under motor torque alone
+      omega[i] += (netT / I_WHEEL) * dt;
+      slipRatio[i] = 0;
+      engineForce = 0;
+    }
+    omega[i] = THREE.MathUtils.clamp(omega[i], -650, 650);
+    spinAngle[i] += omega[i]*dt;
+
+    vehicle.applyEngineForce(engineForce, i);
+    vehicle.setBrake(0, i); // braking handled via our own torque model above
+
+    // accumulate wheel angular momentum (world space)
+    const Lmag = I_WHEEL * omega[i];
+    Lx += axW.x*Lmag; Ly += axW.y*Lmag; Lz += axW.z*Lmag;
+
+    // stash for visuals
+    wheelMeshes[i].userData.pos = wheelPosW;
+    wheelMeshes[i].userData.fwd = fwdW;
+    wheelMeshes[i].userData.axle = axW;
+    wheelMeshes[i].userData.up = upW;
+  }
+
+  // ---- gyroscopic reaction torque on chassis:  τ = -Ω × L ----
+  // Real effect (turning a spinning wheel induces a roll torque — same reason a bike leans into
+  // countersteer), but this chassis's roll inertia is tiny (light single-box shape), so the raw
+  // torque is clamped to keep it from ever overpowering the car and flipping it.
+  const Ltot = new CANNON.Vec3(Lx,Ly,Lz);
+  const gyro = new CANNON.Vec3();
+  chassisBody.angularVelocity.cross(Ltot, gyro);
+  gyro.scale(-gyroMultiplier, gyro);
+  const GYRO_TORQUE_CAP = 0.35; // N*m
+  const gmag = gyro.length();
+  if (gmag > GYRO_TORQUE_CAP) gyro.scale(GYRO_TORQUE_CAP/gmag, gyro);
+  chassisBody.torque.x += gyro.x;
+  chassisBody.torque.y += gyro.y;
+  chassisBody.torque.z += gyro.z;
+  lastGyroMag = gyro.length();
+
+  // ---- aerodynamics: drag + lift, plus crosswind ----
+  const wind = new CANNON.Vec3(0,0,windX);
+  const relVel = chassisBody.velocity.vsub(wind);
+  const speed = relVel.length();
+  window.__aeroDrag = 0; window.__aeroLift = 0;
+  if (speed > 0.05){
+    const dragMag = 0.5*AIR_DENSITY*CD*FRONTAL_AREA*speed*speed;
+    const dragDir = relVel.scale(-1/speed);
+    const dragForce = dragDir.scale(dragMag);
+    const cop = chassisBody.position.vadd(forwardW.scale(0.04));
+    chassisBody.applyForce(dragForce, cop);
+
+    const liftMag = 0.5*AIR_DENSITY*CL*FRONTAL_AREA*speed*speed;
+    chassisBody.applyForce(new CANNON.Vec3(0, liftMag, 0), cop);
+
+    window.__aeroDrag = dragMag;
+    window.__aeroLift = liftMag;
+  }
+ }catch(e){ console.warn('preStep physics error (frame skipped):', e); }
+});
+
+// ============================================================================
+// AIRFLOW PARTICLES — GPU compute (TSL/WebGPU) with automatic CPU fallback
+// ============================================================================
+loadingMsg.textContent = 'Setting up airflow visualization…';
+
+const AIR_PARTICLES_PER_WHEEL = 260;
+const AIR_LIFE = 0.85;
+let airflowSystems = [];
+let airflowMode = 'none';
+
+async function trySetupGPUAirflow(){
+  const { Fn, instancedArray, instanceIndex, uniform, vec3, hash, sin, cos, deltaTime, time, If } = TSL;
+  const systems = [];
+  for(let w=0; w<4; w++){
+    const count = AIR_PARTICLES_PER_WHEEL;
+    const positions = instancedArray(count, 'vec3');
+    const velocities = instancedArray(count, 'vec3');
+    const ages = instancedArray(count, 'float');
+
+    const uPos  = uniform(new THREE.Vector3());
+    const uFwd  = uniform(new THREE.Vector3(1,0,0));
+    const uUp   = uniform(new THREE.Vector3(0,1,0));
+    const uOmega= uniform(0);
+    const uVel  = uniform(new THREE.Vector3());
+    const uLife = uniform(AIR_LIFE);
+    const uRad  = uniform(WHEEL_RADIUS*1.15);
+
+    const initFn = Fn(()=>{
+      const a = ages.element(instanceIndex);
+      const p = positions.element(instanceIndex);
+      a.assign(hash(instanceIndex.toFloat().add(w+1)).mul(uLife));
+      p.assign(uPos);
+    })().compute(count);
+
+    const updateFn = Fn(()=>{
+      const p = positions.element(instanceIndex);
+      const v = velocities.element(instanceIndex);
+      const a = ages.element(instanceIndex);
+      a.addAssign(deltaTime);
+
+      If(a.greaterThan(uLife), ()=>{
+        a.assign(0);
+        const ang = hash(instanceIndex.toFloat().add(time)).mul(6.2831853);
+        const rvec = uFwd.mul(cos(ang)).add(uUp.mul(sin(ang))).mul(uRad);
+        p.assign(uPos.add(rvec));
+        const tang = uFwd.mul(sin(ang).negate()).add(uUp.mul(cos(ang)));
+        v.assign(tang.mul(uOmega).mul(uRad*0.6).add(uVel.mul(0.3)));
+      });
+      If(a.lessThanEqual(uLife), ()=>{
+        v.addAssign(vec3(0,-1.0,0).mul(deltaTime));
+        v.assign(v.mul(0.985));
+        p.assign(p.add(v.mul(deltaTime)));
+      });
+    })().compute(count);
+
+    await renderer.computeAsync(initFn);
+
+    const material = new THREE.SpriteNodeMaterial({ transparent:true, depthWrite:false });
+    material.blending = THREE.AdditiveBlending;
+    material.positionNode = positions.toAttribute();
+    material.scaleNode = uniform(0.011);
+    material.colorNode = vec3(0.78,0.87,1.0);
+    material.opacity = 0.55;
+    const mesh = new THREE.Mesh(new THREE.SpriteGeometry(), material);
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+
+    systems.push({
+      gpu:true, mesh, updateFn,
+      setUniforms(pos,fwd,up,omg,vel){
+        uPos.value.copy(pos); uFwd.value.copy(fwd); uUp.value.copy(up);
+        uOmega.value = omg; uVel.value.copy(vel);
+      }
+    });
+  }
+  // sanity check: run one compute pass now; if it throws, whole GPU path is rejected
+  for(const s of systems) await renderer.computeAsync(s.updateFn);
+  return systems;
+}
+
+function setupCPUAirflow(){
+  const systems = [];
+  for(let w=0; w<4; w++){
+    const count = AIR_PARTICLES_PER_WHEEL;
+    const positions = new Float32Array(count*3);
+    const velocities = new Float32Array(count*3);
+    const ages = new Float32Array(count);
+    for(let i=0;i<count;i++) ages[i] = Math.random()*AIR_LIFE;
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
+    const mat = new THREE.PointsMaterial({ color:0xc8dcff, size:0.022, transparent:true, opacity:0.55,
+      depthWrite:false, blending:THREE.AdditiveBlending, sizeAttenuation:true });
+    const mesh = new THREE.Points(geo, mat);
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+
+    systems.push({
+      gpu:false, mesh, positions, velocities, ages, count,
+      setUniforms(pos,fwd,up,omg,vel,dt){
+        for(let i=0;i<count;i++){
+          ages[i]+=dt;
+          const i3=i*3;
+          if (ages[i] > AIR_LIFE){
+            ages[i]=0;
+            const ang = Math.random()*Math.PI*2;
+            const rad = WHEEL_RADIUS*1.15;
+            const rx = fwd.x*Math.cos(ang)*rad + up.x*Math.sin(ang)*rad;
+            const ry = fwd.y*Math.cos(ang)*rad + up.y*Math.sin(ang)*rad;
+            const rz = fwd.z*Math.cos(ang)*rad + up.z*Math.sin(ang)*rad;
+            positions[i3]=pos.x+rx; positions[i3+1]=pos.y+ry; positions[i3+2]=pos.z+rz;
+            const tx = -fwd.x*Math.sin(ang) + up.x*Math.cos(ang);
+            const ty = -fwd.y*Math.sin(ang) + up.y*Math.cos(ang);
+            const tz = -fwd.z*Math.sin(ang) + up.z*Math.cos(ang);
+            const spd = omg*rad*0.6;
+            velocities[i3]=tx*spd+vel.x*0.3; velocities[i3+1]=ty*spd+vel.y*0.3; velocities[i3+2]=tz*spd+vel.z*0.3;
+          } else {
+            velocities[i3+1]-=1.0*dt;
+            velocities[i3]*=0.985; velocities[i3+1]*=0.985; velocities[i3+2]*=0.985;
+            positions[i3]+=velocities[i3]*dt; positions[i3+1]+=velocities[i3+1]*dt; positions[i3+2]+=velocities[i3+2]*dt;
+          }
+        }
+        mesh.geometry.attributes.position.needsUpdate = true;
+      }
+    });
+  }
+  return systems;
+}
+
+try{
+  if (usingWebGPU){
+    airflowSystems = await trySetupGPUAirflow();
+    airflowMode = 'gpu';
+  } else {
+    throw new Error('WebGL2 fallback backend: skipping GPU compute path');
+  }
+}catch(e){
+  console.warn('GPU compute airflow unavailable, using CPU fallback:', e);
+  for(const s of airflowSystems){ if(s.mesh) scene.remove(s.mesh); }
+  airflowSystems = setupCPUAirflow();
+  airflowMode = 'cpu';
+}
+document.getElementById('status').textContent =
+  'Backend: ' + (usingWebGPU?'WebGPU':'WebGL2 (fallback)') + '  ·  Airflow compute: ' + (airflowMode==='gpu'?'GPU (WebGPU)':'CPU fallback');
+
+// ============================================================================
+// CAMERA (chase cam with mouse-drag orbit offset)
+// ============================================================================
+let camYaw = 0, camPitch = 0.22;
+let dragging = false, lastX=0, lastY=0;
+canvas.addEventListener('pointerdown', e=>{dragging=true; lastX=e.clientX; lastY=e.clientY;});
+window.addEventListener('pointerup', ()=>dragging=false);
+window.addEventListener('pointermove', e=>{
+  if(!dragging) return;
+  camYaw   -= (e.clientX-lastX)*0.006;
+  camPitch = THREE.MathUtils.clamp(camPitch - (e.clientY-lastY)*0.004, -0.15, 0.9);
+  lastX=e.clientX; lastY=e.clientY;
+});
+
+const camPos = new THREE.Vector3(0,1.2,-2);
+const camTarget = new THREE.Vector3();
+function updateCamera(dt){
+  const cp = chassisBody.position, cq = chassisBody.quaternion;
+  const carPos = new THREE.Vector3(cp.x,cp.y,cp.z);
+  const carQuat = new THREE.Quaternion(cq.x,cq.y,cq.z,cq.w);
+  // car's local forward axis is +X (see corners/axleLocal convention above) — build the chase
+  // position directly from that vector instead of an atan2(x,z) yaw, which silently assumed
+  // forward was world Z and was the actual cause of the camera appearing to drift sideways.
+  const forward = new THREE.Vector3(1,0,0).applyQuaternion(carQuat);
+  const right   = new THREE.Vector3(0,0,1).applyQuaternion(carQuat);
+  const mouseRot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), camYaw);
+
+  const dist = 1.15, height = 0.55;
+  const back = forward.clone().multiplyScalar(-dist*Math.cos(camPitch)).applyQuaternion(mouseRot);
+  const desired = new THREE.Vector3(
+    carPos.x + back.x,
+    carPos.y + height + Math.sin(camPitch)*dist*0.8 + 0.15,
+    carPos.z + back.z
+  );
+  camPos.lerp(desired, Math.min(1, dt*6));
+  camTarget.lerp(carPos.clone().add(new THREE.Vector3(0,0.12,0)), Math.min(1, dt*10));
+  camera.position.copy(camPos);
+  camera.lookAt(camTarget);
+  sun.target.position.copy(carPos);
+  sun.position.copy(carPos).add(new THREE.Vector3(8,14,-6));
+}
+
+// ============================================================================
+// UI wiring
+// ============================================================================
+const gyroSlider = document.getElementById('gyroSlider');
+const gyroVal = document.getElementById('gyroVal');
+gyroSlider.addEventListener('input', ()=>{ gyroMultiplier = parseFloat(gyroSlider.value); gyroVal.textContent = gyroMultiplier.toFixed(1)+'×'; });
+const windSlider = document.getElementById('windSlider');
+const windVal = document.getElementById('windVal');
+windSlider.addEventListener('input', ()=>{ windX = parseFloat(windSlider.value); windVal.textContent = windX.toFixed(1)+' m/s'; });
+window.addEventListener('keydown', e=>{ if(e.code==='KeyR') resetCar(); });
+
+const gripCells = [document.getElementById('gFL'),document.getElementById('gFR'),document.getElementById('gRL'),document.getElementById('gRR')];
+const airFlagEl = document.getElementById('airFlag');
+const speedNumEl = document.getElementById('speedNum');
+const wheelRpmEl = document.getElementById('wheelRpm');
+const motorRpmEl = document.getElementById('motorRpm');
+const dragForceEl = document.getElementById('dragForce');
+const liftForceEl = document.getElementById('liftForce');
+const gyroTorqueEl = document.getElementById('gyroTorque');
+const gForceEl = document.getElementById('gForce');
+
+function updateHUD(){
+  const speed = chassisBody.velocity.length();
+  speedNumEl.textContent = (speed*3.6).toFixed(0);
+  const avgOmega = (Math.abs(omega[0])+Math.abs(omega[1])+Math.abs(omega[2])+Math.abs(omega[3]))/4;
+  wheelRpmEl.textContent = (avgOmega*60/(2*Math.PI)).toFixed(0);
+  motorRpmEl.textContent = (avgOmega*GEAR_RATIO*60/(2*Math.PI)).toFixed(0);
+  dragForceEl.textContent = (window.__aeroDrag||0).toFixed(1)+' N';
+  liftForceEl.textContent = (window.__aeroLift||0).toFixed(1)+' N';
+  gyroTorqueEl.textContent = lastGyroMag.toFixed(2)+' N·m';
+  const gAccel = Math.abs(chassisBody.velocity.length()-lastGforceSpeed)/Math.max(FIXED_DT,1e-4)/9.81;
+  gForceEl.textContent = gAccel.toFixed(2)+' g';
+
+  const allAir = contact.every(c=>!c);
+  airFlagEl.classList.toggle('show', allAir);
+
+  for(let i=0;i<4;i++){
+    const cell = gripCells[i];
+    if (!contact[i]){ cell.style.background = '#2a2e33'; cell.style.transform='scale(0.9)'; continue; }
+    const s = Math.min(1, Math.abs(slipRatio[i]));
+    let col;
+    if (s < 0.18) col = '#39d98a';
+    else if (s < 0.45) col = '#ffcc4d';
+    else col = '#ff4d4d';
+    cell.style.background = col;
+    cell.style.transform = 'scale(1)';
+  }
+}
+let lastGforceSpeed = 0;
+
+// ============================================================================
+// MAIN LOOP
+// ============================================================================
+const clock = new THREE.Clock();
+let physAccum = 0;
+
+renderer.setAnimationLoop(function(){
+ try{
+  const frameDt = Math.min(clock.getDelta(), 0.1);
+
+  lastGforceSpeed = chassisBody.velocity.length();
+  world.step(FIXED_DT, frameDt, 6);
+
+  // sync chassis
+  chassisMesh.position.copy(chassisBody.position);
+  chassisMesh.quaternion.copy(chassisBody.quaternion);
+
+  // sync wheels: position from RaycastVehicle suspension solve, rotation = chassis*steer*ourSpin
+  for(let i=0;i<4;i++){
+    vehicle.updateWheelTransform(i);
+    const t = vehicle.wheelInfos[i].worldTransform;
+    wheelMeshes[i].position.set(t.position.x, t.position.y, t.position.z);
+
+    const isFront = i<2;
+    const chassisQ = new THREE.Quaternion(chassisBody.quaternion.x,chassisBody.quaternion.y,chassisBody.quaternion.z,chassisBody.quaternion.w);
+    const steerQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), isFront?steerAngle:0);
+    const spinQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), spinAngle[i]);
+    wheelMeshes[i].quaternion.copy(chassisQ).multiply(steerQ).multiply(spinQ);
+  }
+
+  // airflow particles
+  for(let i=0;i<4;i++){
+    const ud = wheelMeshes[i].userData;
+    if (ud.pos){
+      const pos = new THREE.Vector3(ud.pos.x,ud.pos.y,ud.pos.z);
+      const fwd = new THREE.Vector3(ud.fwd.x,ud.fwd.y,ud.fwd.z);
+      const up  = new THREE.Vector3(ud.up.x,ud.up.y,ud.up.z);
+      const vel = new THREE.Vector3(chassisBody.velocity.x,chassisBody.velocity.y,chassisBody.velocity.z);
+      airflowSystems[i].setUniforms(pos, fwd, up, omega[i], vel, frameDt);
+    }
+  }
+  if (airflowMode==='gpu'){
+    for(const s of airflowSystems){
+      try{ renderer.computeAsync(s.updateFn); }catch(e){ /* swallow per-frame compute errors */ }
+    }
+  }
+
+  updateCamera(frameDt);
+  updateHUD();
+
+  renderer.render(scene, camera);
+ }catch(e){
+  console.error('Render loop error:', e);
+  document.getElementById('status').textContent = 'Runtime error — see console (' + (e.message||e) + ')';
+ }
+});
+
+loadingEl.style.opacity = '0';
+setTimeout(()=>{ loadingEl.style.display='none'; }, 400);
+
+} // end main()
+</script>
+</body>
+</html>
