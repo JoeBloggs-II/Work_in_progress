@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RGB565 BMP Converter</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #111827;
+            color: #f9fafb;
+        }
+
+        .container {
+            width: min(700px, 92vw);
+            padding: 32px;
+            background: #1f2937;
+            border-radius: 18px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 28px;
+        }
+
+        p {
+            color: #cbd5e1;
+        }
+
+        .drop-zone {
+            margin-top: 25px;
+            padding: 50px 20px;
+            border: 2px dashed #64748b;
+            border-radius: 14px;
+            text-align: center;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.dragover {
+            border-color: #60a5fa;
+            background: #243449;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        button {
+            margin-top: 20px;
+            padding: 12px 20px;
+            border: 0;
+            border-radius: 10px;
+            background: #3b82f6;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #2563eb;
+        }
+
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        #preview {
+            display: block;
+            max-width: 100%;
+            max-height: 350px;
+            margin: 25px auto 0;
+            border-radius: 10px;
+            image-rendering: pixelated;
+        }
+
+        #info {
+            margin-top: 15px;
+            color: #94a3b8;
+            font-family: monospace;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>RGB565 BMP Converter</h1>
+
+    <p>
+        Upload an image and convert it to a 16-bit RGB565 BMP.
+        Everything happens locally in your browser.
+    </p>
+
+    <label class="drop-zone" id="dropZone">
+        <strong>Drop an image here</strong>
+        <br>
+        or click to choose a file
+        <input id="fileInput" type="file" accept="image/*">
+    </label>
+
+    <canvas id="canvas" hidden></canvas>
+
+    <img id="preview" hidden>
+
+    <div id="info"></div>
+
+    <button id="downloadButton" disabled>
+        Download RGB565 BMP
+    </button>
+
+</div>
+
+<script>
+"use strict";
+
+const fileInput = document.getElementById("fileInput");
+const dropZone = document.getElementById("dropZone");
+const canvas = document.getElementById("canvas");
+const preview = document.getElementById("preview");
+const info = document.getElementById("info");
+const downloadButton = document.getElementById("downloadButton");
+
+let convertedBMP = null;
+
+
+/*
+ * Convert one RGB pixel to RGB565.
+ *
+ * RGB565 layout:
+ *
+ * RRRRR GGGGGG BBBBB
+ *  5 bits  6 bits  5 bits
+ */
+function rgbTo565(r, g, b) {
+
+    const red   = (r >> 3) & 0x1F;
+    const green = (g >> 2) & 0x3F;
+    const blue  = (b >> 3) & 0x1F;
+
+    return (red << 11) | (green << 5) | blue;
+}
+
+
+/*
+ * Create a BMP using a 16-bit RGB565 pixel format.
+ *
+ * BMP structure:
+ *
+ * BITMAPFILEHEADER
+ * BITMAPINFOHEADER
+ * RGB565 bit masks
+ * pixel data
+ */
+function createRGB565BMP(imageData, width, height) {
+
+    /*
+     * Each pixel is exactly 2 bytes.
+     */
+    const bytesPerPixel = 2;
+
+    /*
+     * BMP rows are padded to a multiple of 4 bytes.
+     *
+     * Since 2 * width might not be divisible by 4,
+     * calculate the necessary padding.
+     */
+    const rowSize = Math.ceil(
+        (width * bytesPerPixel) / 4
+    ) * 4;
+
+    const pixelDataSize = rowSize * height;
+
+    /*
+     * BMP file layout:
+     *
+     * 14 byte file header
+     * 40 byte info header
+     * 12 byte RGB masks
+     * pixel data
+     */
+    const fileHeaderSize = 14;
+    const infoHeaderSize = 40;
+    const maskSize = 12;
+
+    const pixelOffset =
+        fileHeaderSize +
+        infoHeaderSize +
+        maskSize;
+
+    const fileSize = pixelOffset + pixelDataSize;
+
+    const buffer = new ArrayBuffer(fileSize);
+    const view = new DataView(buffer);
+
+    /*
+     * --------------------------------------------------
+     * BITMAPFILEHEADER
+     * --------------------------------------------------
+     */
+
+    // Signature "BM"
+    view.setUint8(0, 0x42);
+    view.setUint8(1, 0x4D);
+
+    // File size
+    view.setUint32(2, fileSize, true);
+
+    // Reserved
+    view.setUint16(6, 0, true);
+    view.setUint16(8, 0, true);
+
+    // Offset to pixel data
+    view.setUint32(10, pixelOffset, true);
+
+
+    /*
+     * --------------------------------------------------
+     * BITMAPINFOHEADER
+     * --------------------------------------------------
+     */
+
+    // Header size
+    view.setUint32(14, infoHeaderSize, true);
+
+    // Width
+    view.setInt32(18, width, true);
+
+    /*
+     * Negative height means top-to-bottom rows.
+     * This makes the BMP easier to construct because
+     * canvas data is also top-to-bottom.
+     */
+    view.setInt32(22, -height, true);
+
+    // Number of color planes
+    view.setUint16(26, 1, true);
+
+    // Bits per pixel
+    view.setUint16(28, 16, true);
+
+    /*
+     * BI_BITFIELDS
+     *
+     * This tells BMP readers that color masks follow.
+     */
+    view.setUint32(30, 3, true);
+
+    // Image size
+    view.setUint32(34, pixelDataSize, true);
+
+    // Horizontal resolution
+    view.setInt32(38, 2835, true);
+
+    // Vertical resolution
+    view.setInt32(42, 2835, true);
+
+    // Number of colors
+    view.setUint32(46, 0, true);
+
+    // Important colors
+    view.setUint32(50, 0, true);
+
+
+    /*
+     * --------------------------------------------------
+     * RGB565 MASKS
+     * --------------------------------------------------
+     *
+     * Red   = 1111100000000000
+     * Green = 0000011111100000
+     * Blue  = 0000000000011111
+     */
+
+    // Red mask
+    view.setUint32(54, 0xF800, true);
+
+    // Green mask
+    view.setUint32(58, 0x07E0, true);
+
+    // Blue mask
+    view.setUint32(62, 0x001F, true);
+
+
+    /*
+     * --------------------------------------------------
+     * PIXEL DATA
+     * --------------------------------------------------
+     */
+
+    let outputOffset = pixelOffset;
+
+    const pixels = imageData.data;
+
+    for (let y = 0; y < height; y++) {
+
+        for (let x = 0; x < width; x++) {
+
+            const sourceIndex =
+                (y * width + x) * 4;
+
+            const r = pixels[sourceIndex];
+            const g = pixels[sourceIndex + 1];
+            const b = pixels[sourceIndex + 2];
+
+            const rgb565 = rgbTo565(r, g, b);
+
+            /*
+             * BMP RGB565 data is stored as
+             * little-endian 16-bit values.
+             */
+            view.setUint16(
+                outputOffset,
+                rgb565,
+                true
+            );
+
+            outputOffset += 2;
+        }
+
+        /*
+         * Padding bytes.
+         */
+        while (
+            (outputOffset - pixelOffset) % rowSize !== 0
+        ) {
+            view.setUint8(outputOffset, 0);
+            outputOffset++;
+        }
+    }
+
+    return new Blob(
+        [buffer],
+        { type: "image/bmp" }
+    );
+}
+
+
+/*
+ * Load an image file.
+ */
+function processImage(file) {
+
+    if (!file || !file.type.startsWith("image/")) {
+        alert("Please select an image file.");
+        return;
+    }
+
+    const url = URL.createObjectURL(file);
+
+    const image = new Image();
+
+    image.onload = () => {
+
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+
+        const ctx = canvas.getContext("2d", {
+            willReadFrequently: true
+        });
+
+        ctx.drawImage(
+            image,
+            0,
+            0
+        );
+
+        const imageData = ctx.getImageData(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+        convertedBMP = createRGB565BMP(
+            imageData,
+            canvas.width,
+            canvas.height
+        );
+
+        /*
+         * Preview the original image.
+         */
+        preview.src = url;
+        preview.hidden = false;
+
+        /*
+         * Display information.
+         */
+        const rgb565Bytes =
+            canvas.width *
+            canvas.height *
+            2;
+
+        info.textContent =
+            `${canvas.width} × ${canvas.height} | ` +
+            `RGB565: ${rgb565Bytes.toLocaleString()} bytes | ` +
+            `BMP: ${convertedBMP.size.toLocaleString()} bytes`;
+
+        downloadButton.disabled = false;
+    };
+
+    image.onerror = () => {
+        alert("Could not load that image.");
+        URL.revokeObjectURL(url);
+    };
+
+    image.src = url;
+}
+
+
+/*
+ * File picker.
+ */
+fileInput.addEventListener("change", () => {
+
+    if (fileInput.files.length > 0) {
+        processImage(fileInput.files[0]);
+    }
+});
+
+
+/*
+ * Clicking the drop zone opens the file picker.
+ */
+dropZone.addEventListener("click", () => {
+    fileInput.click();
+});
+
+
+/*
+ * Drag and drop.
+ */
+dropZone.addEventListener("dragover", event => {
+
+    event.preventDefault();
+
+    dropZone.classList.add("dragover");
+});
+
+
+dropZone.addEventListener("dragleave", () => {
+
+    dropZone.classList.remove("dragover");
+});
+
+
+dropZone.addEventListener("drop", event => {
+
+    event.preventDefault();
+
+    dropZone.classList.remove("dragover");
+
+    const files = event.dataTransfer.files;
+
+    if (files.length > 0) {
+        processImage(files[0]);
+    }
+});
+
+
+/*
+ * Download the generated BMP.
+ */
+downloadButton.addEventListener("click", () => {
+
+    if (!convertedBMP) {
+        return;
+    }
+
+    const link = document.createElement("a");
+
+    link.href = URL.createObjectURL(convertedBMP);
+    link.download = "image_rgb565.bmp";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    /*
+     * Clean up the temporary object URL.
+     */
+    setTimeout(() => {
+        URL.revokeObjectURL(link.href);
+    }, 1000);
+});
+</script>
+
+</body>
+</html>
