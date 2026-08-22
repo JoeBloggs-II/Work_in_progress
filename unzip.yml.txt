@@ -1,0 +1,42 @@
+name: Auto Extract Archives
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '**.zip'
+      - '**.7z'
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install 7zip
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+
+      - name: Extract archives
+        shell: bash
+        run: |
+          set -e
+          shopt -s nullglob
+          for f in $(find . -type f \( -name "*.zip" -o -name "*.7z" \)); do
+            echo "Extracting $f..."
+            dirname="${f%.*}"
+            mkdir -p "$dirname"
+            if [[ "$f" == *.zip ]]; then
+              unzip -o "$f" -d "$dirname"
+            elif [[ "$f" == *.7z ]]; then
+              7z x -y "$f" -o"$dirname"
+            fi
+          done
+
+      - name: Commit and push extracted files
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Auto-extracted uploaded archives" || echo "No changes to commit"
+          git push
