@@ -6,7 +6,9 @@ on:
     paths:
       - '**.zip'
       - '**.7z'
-
+permissions:
+  contents: write
+  
 jobs:
   extract:
     runs-on: ubuntu-latest
