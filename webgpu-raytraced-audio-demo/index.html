@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WebGPU Raytraced Audio</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090b10;
+      --panel: #11151d;
+      --panel2: #0d1118;
+      --text: #e8eef7;
+      --muted: #93a2b7;
+      --line: #253043;
+      --accent: #76a9ff;
+      --good: #7ce7ad;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 25% 5%, #111b2d 0, var(--bg) 42rem);
+      color: var(--text);
+      font: 14px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .wrap { max-width: 1320px; margin: 0 auto; padding: 22px; }
+    h1 { margin: 0 0 6px; font-size: 25px; letter-spacing: -0.02em; }
+    .sub { color: var(--muted); margin-bottom: 18px; }
+    .grid { display: grid; grid-template-columns: 1.5fr 0.75fr; gap: 16px; }
+    .card {
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 10px 35px #0005;
+    }
+    .stage { position: relative; }
+    canvas { width: 100%; height: auto; display: block; background: #080a0f; }
+    #status {
+      position: absolute; left: 12px; top: 12px;
+      padding: 7px 10px; border-radius: 9px;
+      background: #090d14dd; border: 1px solid #28354a;
+      color: var(--muted); backdrop-filter: blur(6px);
+    }
+    .controls { padding: 16px; }
+    .section { padding: 12px 0 14px; border-bottom: 1px solid var(--line); }
+    .section:last-child { border-bottom: 0; }
+    .section h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .09em; color: #b9c7da; }
+    .row { display: grid; grid-template-columns: 1fr 90px; gap: 10px; align-items: center; margin: 8px 0; }
+    label { color: var(--muted); }
+    input[type=range] { width: 100%; accent-color: var(--accent); }
+    input[type=number] {
+      width: 90px; background: var(--panel2); color: var(--text);
+      border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px;
+    }
+    .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+    button {
+      appearance: none; border: 1px solid #31405a; background: #172033; color: var(--text);
+      border-radius: 9px; padding: 9px 12px; cursor: pointer; font-weight: 600;
+    }
+    button:hover { background: #1c2940; }
+    button.primary { background: #204b91; border-color: #3567b8; }
+    button.primary:hover { background: #2858a2; }
+    button:disabled { opacity: .45; cursor: default; }
+    .stat {
+      display: grid; grid-template-columns: 1fr auto; gap: 6px;
+      padding: 7px 0; color: var(--muted);
+    }
+    .stat b { color: var(--text); font-variant-numeric: tabular-nums; }
+    .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: 12px; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+    .foot { margin-top: 15px; color: var(--muted); font-size: 12px; }
+    code { color: #c6d7ff; }
+    @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>WebGPU Raytraced Audio</h1>
+  <div class="sub">GPU ray/path tracing estimates a room impulse response; Web Audio convolves a live source through the resulting reflections.</div>
+
+  <div class="grid">
+    <div class="card stage">
+      <canvas id="view" width="960" height="620"></canvas>
+      <div id="status">Initializing WebGPU…</div>
+    </div>
+
+    <div class="card controls">
+      <div class="section">
+        <h2>Audio</h2>
+        <div class="btns">
+          <button id="start" class="primary">Start audio</button>
+          <button id="mute">Mute</button>
+          <button id="retrace">Retrace now</button>
+        </div>
+        <div class="row">
+          <label for="freq">Source frequency</label>
+          <input id="freq" type="number" min="60" max="2000" step="10" value="220">
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Room</h2>
+        <div class="row">
+          <label>Width <span id="wVal">12.0</span> m</label>
+          <input id="width" type="range" min="6" max="24" step=".5" value="12">
+        </div>
+        <div class="row">
+          <label>Depth <span id="dVal">9.0</span> m</label>
+          <input id="depth" type="range" min="5" max="18" step=".5" value="9">
+        </div>
+        <div class="row">
+          <label>Height <span id="hVal">4.0</span> m</label>
+          <input id="height" type="range" min="2.5" max="8" step=".25" value="4">
+        </div>
+        <div class="row">
+          <label>Wall absorption <span id="aVal">0.18</span></label>
+          <input id="absorb" type="range" min=".02" max=".65" step=".01" value=".18">
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Tracing</h2>
+        <div class="row">
+          <label>Audio rays</label>
+          <input id="rays" type="number" min="512" max="32768" step="512" value="8192">
+        </div>
+        <div class="row">
+          <label>Bounces</label>
+          <input id="bounces" type="number" min="1" max="12" step="1" value="7">
+        </div>
+        <div class="row">
+          <label>Receiver radius <span id="rVal">0.55</span> m</label>
+          <input id="receiver" type="range" min=".15" max="1.5" step=".05" value=".55">
+        </div>
+        <div class="btns">
+          <button id="retrace2" class="primary">Recompute impulse response</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Live metrics</h2>
+        <div class="stat"><span>Trace time</span><b id="traceMs">—</b></div>
+        <div class="stat"><span>Estimated RT60</span><b id="rt60">—</b></div>
+        <div class="stat"><span>First-arrival path</span><b id="firstArrival">—</b></div>
+        <div class="stat"><span>Reflection energy</span><b id="energy">—</b></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot" style="background:#74b9ff"></i>source</span>
+    <span><i class="dot" style="background:#7ce7ad"></i>listener</span>
+    <span><i class="dot" style="background:#ffbd69"></i>ray path</span>
+    <span><i class="dot" style="background:#ff6f91"></i>obstacle</span>
+  </div>
+  <div class="foot">
+    Uses manual geometric ray tracing in a WebGPU compute shader (not a vendor-specific RT extension). Open from a secure context such as <code>https://</code> or <code>localhost</code>.
+  </div>
+</div>
+
+<script type="module">
+const $ = id => document.getElementById(id);
+const view = $("view");
+const ctx2d = view.getContext("2d");
+const statusEl = $("status");
+
+let gpu = null;
+let tracer = null;
+let audio = null;
+let lastIR = null;
+let lastDebug = null;
+let dirty = true;
+let tracing = false;
+let lastTraceAt = 0;
+
+const DEBUG_RAYS = 96;
+const IR_BINS = 8192;
+const SAMPLE_RATE = 48000;
+const SPEED_OF_SOUND = 343.0;
+
+function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
+function fmt(n, d=2) { return Number.isFinite(n) ? n.toFixed(d) : "—"; }
+
+function sceneParams() {
+  return {
+    width: +$("width").value,
+    depth: +$("depth").value,
+    height: +$("height").value,
+    absorption: +$("absorb").value,
+    rays: Math.floor(+$("rays").value),
+    bounces: Math.floor(+$("bounces").value),
+    receiver: +$("receiver").value,
+    frequency: +$("freq").value
+  };
+}
+
+function syncLabels() {
+  $("wVal").textContent = (+$("width").value).toFixed(1);
+  $("dVal").textContent = (+$("depth").value).toFixed(1);
+  $("hVal").textContent = (+$("height").value).toFixed(2);
+  $("aVal").textContent = (+$("absorb").value).toFixed(2);
+  $("rVal").textContent = (+$("receiver").value).toFixed(2);
+}
+["width","depth","height","absorb","receiver"].forEach(id => {
+  $(id).addEventListener("input", () => { syncLabels(); dirty = true; draw(); });
+});
+["rays","bounces"].forEach(id => $(id).addEventListener("change", () => dirty = true));
+syncLabels();
+
+const shader = /* wgsl */`
+struct Params {
+  room: vec4<f32>,          // x width, y depth, z height, w receiver radius
+  sphere: vec4<f32>,        // xyz center, w radius (negative radius disables)
+  source: vec4<f32>,        // xyz
+  listener: vec4<f32>,      // xyz
+  trace: vec4<u32>,         // x sampleRate, y irBins, z audioRays, w bounces
+  material: vec4<f32>,      // x absorption, y obstacleReflectivity, z seed, w debugRays
+};
+
+@group(0) @binding(0) var<uniform> P: Params;
+@group(0) @binding(1) var<storage, read_write> IR: array<atomic<u32>>;
+@group(0) @binding(2) var<storage, read_write> DEBUG: array<vec4<f32>>;
+
+const PI: f32 = 3.141592653589793;
+const C: f32 = 343.0;
+const EPS: f32 = 0.002;
+
+struct Hit {
+  ok: bool,
+  t: f32,
+  pos: vec3<f32>,
+  n: vec3<f32>,
+  refl: f32,
+};
+
+fn hash(x0: u32) -> f32 {
+  var x = x0 * 747796405u + 2891336453u;
+  x = ((x >> 16u) ^ x) * 2246822519u;
+  x = ((x >> 13u) ^ x) * 3266489917u;
+  x = (x >> 16u) ^ x;
+  return f32(x) / 4294967295.0;
+}
+
+fn random2(i: u32, salt: u32) -> vec2<f32> {
+  return vec2<f32>(
+    hash(i * 2u + salt + 1u),
+    hash(i * 2u + salt + 2u)
+  );
+}
+
+fn sphereHit(ro: vec3<f32>, rd: vec3<f32>, center: vec3<f32>, radius: f32, refl: f32) -> Hit {
+  var h: Hit;
+  h.ok = false; h.t = 1e30; h.pos = vec3<f32>(); h.n = vec3<f32>(); h.refl = refl;
+  if (radius <= 0.0) { return h; }
+  let oc = ro - center;
+  let b = dot(oc, rd);
+  let c0 = dot(oc, oc) - radius * radius;
+  let disc = b*b - c0;
+  if (disc < 0.0) { return h; }
+  let s = sqrt(disc);
+  var t = -b - s;
+  if (t <= EPS) { t = -b + s; }
+  if (t > EPS) {
+    h.ok = true; h.t = t; h.pos = ro + rd*t;
+    h.n = normalize(h.pos - center);
+  }
+  return h;
+}
+
+fn planeHit(ro: vec3<f32>, rd: vec3<f32>, point: vec3<f32>, normal: vec3<f32>, refl: f32) -> Hit {
+  var h: Hit;
+  h.ok = false; h.t = 1e30; h.pos = vec3<f32>(); h.n = normal; h.refl = refl;
+  let d = dot(rd, normal);
+  if (abs(d) < 1e-6) { return h; }
+  let t = dot(point - ro, normal) / d;
+  if (t > EPS) {
+    h.ok = true; h.t = t; h.pos = ro + rd*t;
+  }
+  return h;
+}
+
+fn traceScene(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
+  let W = P.room.x;
+  let D = P.room.y;
+  let H = P.room.z;
+  let refl = 1.0 - P.material.x;
+
+  var best: Hit;
+  best.ok = false; best.t = 1e30; best.pos = ro; best.n = vec3<f32>(); best.refl = refl;
+
+  let candidates = array<Hit, 7>(
+    planeHit(ro, rd, vec3<f32>(0.0, 0.0, 0.0), vec3<f32>( 1.0, 0.0, 0.0), refl),
+    planeHit(ro, rd, vec3<f32>(W,   0.0, 0.0), vec3<f32>(-1.0, 0.0, 0.0), refl),
+    planeHit(ro, rd, vec3<f32>(0.0, 0.0, 0.0), vec3<f32>( 0.0, 1.0, 0.0), refl),
+    planeHit(ro, rd, vec3<f32>(0.0, D,   0.0), vec3<f32>( 0.0,-1.0, 0.0), refl),
+    planeHit(ro, rd, vec3<f32>(0.0, 0.0, 0.0), vec3<f32>( 0.0, 0.0, 1.0), refl),
+    planeHit(ro, rd, vec3<f32>(0.0, 0.0, H),   vec3<f32>( 0.0, 0.0,-1.0), refl),
+    sphereHit(ro, rd, P.sphere.xyz, P.sphere.w, P.material.y)
+  );
+  for (var i = 0u; i < 7u; i++) {
+    if (candidates[i].ok && candidates[i].t < best.t) { best = candidates[i]; }
+  }
+  return best;
+}
+
+fn visibleToListener(ro: vec3<f32>, target: vec3<f32>) -> bool {
+  let delta = target - ro;
+  let dist = length(delta);
+  if (dist <= EPS) { return true; }
+  let rd = delta / dist;
+  let h = traceScene(ro + rd*EPS*2.0, rd);
+  return !h.ok || h.t >= dist - P.room.w * 0.18;
+}
+
+fn addIR(pathLen: f32, energy: f32, rayCount: u32) {
+  if (pathLen <= 0.0 || energy <= 0.0) { return; }
+  let delay = pathLen / C;
+  let bin = u32(delay * f32(P.trace.x));
+  if (bin >= P.trace.y) { return; }
+
+  // Fixed-point accumulation; each ray carries 1/rayCount of the source energy.
+  let scale = min(1.0e8, energy * 3.0e7 / max(1.0, f32(rayCount)));
+  let value = u32(max(0.0, scale));
+  atomicAdd(&IR[bin], value);
+}
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let idx = gid.x;
+  let total = P.trace.z + u32(P.material.w);
+  if (idx >= total) { return; }
+
+  let debug = idx < u32(P.material.w);
+  let rayId = idx;
+  let rr = random2(rayId, u32(P.material.z * 65537.0));
+
+  // Uniform direction over the sphere.
+  let z = rr.x * 2.0 - 1.0;
+  let a = rr.y * 2.0 * PI;
+  let r = sqrt(max(0.0, 1.0 - z*z));
+  var rd = normalize(vec3<f32>(r*cos(a), r*sin(a), z));
+
+  var ro = P.source.xyz;
+  var path = 0.0;
+  var energy = 1.0;
+  var firstPos = ro;
+  var secondPos = ro;
+
+  // Direct arrival: all rays represent samples of the same source; visibility is tested once per ray.
+  if (visibleToListener(ro, P.listener.xyz)) {
+    addIR(length(P.listener.xyz - ro), 1.2, P.trace.z);
+  }
+
+  for (var bounce = 0u; bounce < P.trace.w; bounce++) {
+    let h = traceScene(ro, rd);
+    if (!h.ok) { break; }
+
+    path += h.t;
+    if (debug && bounce == 0u) { firstPos = h.pos; }
+    if (debug && bounce == 1u) { secondPos = h.pos; }
+
+    let link = P.listener.xyz - h.pos;
+    let toListener = length(link);
+    if (toListener > EPS && visibleToListener(h.pos + h.n*EPS*2.0, P.listener.xyz)) {
+      let geometric = 1.0 / (1.0 + 0.18 * toListener * toListener);
+      let angular = max(0.0, dot(h.n, normalize(link)));
+      addIR(path + toListener, energy * h.refl * geometric * (0.2 + 0.8*angular), P.trace.z);
+    }
+
+    energy *= h.refl;
+    if (energy < 0.002) { break; }
+
+    rd = normalize(rd - 2.0 * dot(rd, h.n) * h.n);
+    ro = h.pos + rd * EPS;
+  }
+
+  if (debug) {
+    DEBUG[rayId*2u] = vec4<f32>(firstPos, 1.0);
+    DEBUG[rayId*2u + 1u] = vec4<f32>(secondPos, 1.0);
+  }
+}
+`;
+
+async function initGPU() {
+  if (!navigator.gpu) throw new Error("WebGPU is not available in this browser.");
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error("No compatible WebGPU adapter found.");
+  const device = await adapter.requestDevice();
+  device.lost.then(info => {
+    setStatus("WebGPU device lost: " + info.message);
+  });
+  return { adapter, device };
+}
+
+function makeTracer(device) {
+  const module = device.createShaderModule({code: shader});
+  const pipeline = device.createComputePipeline({
+    layout: "auto",
+    compute: { module, entryPoint: "main" }
+  });
+
+  const paramsBuffer = device.createBuffer({
+    size: 96,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+  });
+  const irBuffer = device.createBuffer({
+    size: IR_BINS * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+  });
+  const debugBuffer = device.createBuffer({
+    size: DEBUG_RAYS * 2 * 16,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+  });
+  const readIR = device.createBuffer({
+    size: IR_BINS * 4,
+    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+  });
+  const readDebug = device.createBuffer({
+    size: DEBUG_RAYS * 2 * 16,
+    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+  });
+
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      {binding: 0, resource: {buffer: paramsBuffer}},
+      {binding: 1, resource: {buffer: irBuffer}},
+      {binding: 2, resource: {buffer: debugBuffer}}
+    ]
+  });
+
+  return {device, pipeline, paramsBuffer, irBuffer, debugBuffer, readIR, readDebug, bindGroup};
+}
+
+function buildParamBytes(p, seed) {
+  const ab = new ArrayBuffer(96);
+  const f = new Float32Array(ab);
+  const u = new Uint32Array(ab);
+  f.set([p.width, p.depth, p.height, p.receiver], 0);
+  f.set([p.width*0.5, p.depth*0.58, Math.min(1.2, p.height*0.35), 0.85], 4); // sphere
+  f.set([p.width*0.22, p.depth*0.25, Math.min(1.4, p.height*0.28)], 8);
+  f.set([p.width*0.73, p.depth*0.67, Math.min(1.5, p.height*0.30)], 12);
+  u.set([SAMPLE_RATE, IR_BINS, p.rays, p.bounces], 16);
+  f.set([p.absorption, 0.72, seed, DEBUG_RAYS], 20);
+  return new Uint8Array(ab);
+}
+
+async function trace() {
+  if (!gpu || tracing) return;
+  tracing = true;
+  setStatus("Tracing reflections…");
+  const p = sceneParams();
+  const start = performance.now();
+
+  gpu.device.queue.writeBuffer(
+    tracer.paramsBuffer, 0,
+    buildParamBytes(p, Math.random() * 100000)
+  );
+  gpu.device.queue.writeBuffer(
+    tracer.irBuffer, 0,
+    new Uint8Array(IR_BINS * 4)
+  );
+  gpu.device.queue.writeBuffer(
+    tracer.debugBuffer, 0,
+    new Uint8Array(DEBUG_RAYS * 2 * 16)
+  );
+
+  const enc = gpu.device.createCommandEncoder();
+  const pass = enc.beginComputePass();
+  pass.setPipeline(tracer.pipeline);
+  pass.setBindGroup(0, tracer.bindGroup);
+  const total = p.rays + DEBUG_RAYS;
+  pass.dispatchWorkgroups(Math.ceil(total / 64));
+  pass.end();
+  enc.copyBufferToBuffer(tracer.irBuffer, 0, tracer.readIR, 0, IR_BINS*4);
+  enc.copyBufferToBuffer(tracer.debugBuffer, 0, tracer.readDebug, 0, DEBUG_RAYS*2*16);
+  gpu.device.queue.submit([enc.finish()]);
+
+  await tracer.readIR.mapAsync(GPUMapMode.READ);
+  const irRaw = new Uint32Array(tracer.readIR.getMappedRange()).slice();
+  tracer.readIR.unmap();
+
+  await tracer.readDebug.mapAsync(GPUMapMode.READ);
+  const debugRaw = new Float32Array(tracer.readDebug.getMappedRange()).slice();
+  tracer.readDebug.unmap();
+
+  const elapsed = performance.now() - start;
+  lastIR = normalizeIR(irRaw);
+  lastDebug = debugRaw;
+  lastTraceAt = performance.now();
+  tracing = false;
+  dirty = false;
+  $("traceMs").textContent = fmt(elapsed, 1) + " ms";
+  updateMetrics(lastIR);
+  draw();
+
+  if (audio?.running) {
+    updateConvolver(lastIR);
+  }
+  setStatus("Ready — WebGPU ray trace complete");
+}
+
+function normalizeIR(raw) {
+  let max = 0;
+  let sum = 0;
+  for (let i=0; i<raw.length; i++) {
+    const x = raw[i];
+    if (x > max) max = x;
+    sum += x;
+  }
+  const out = new Float32Array(raw.length);
+  if (!max) return out;
+  // Apply a mild dynamic-range floor so weak late reflections remain audible.
+  for (let i=0; i<raw.length; i++) {
+    out[i] = Math.sqrt(raw[i] / max);
+  }
+  // Normalize total energy for ConvolverNode stability.
+  let rms = 0;
+  for (let i=0; i<out.length; i++) rms += out[i]*out[i];
+  rms = Math.sqrt(rms / out.length);
+  const gain = rms ? 0.22 / rms : 1.0;
+  for (let i=0; i<out.length; i++) out[i] *= gain;
+  return out;
+}
+
+function updateMetrics(ir) {
+  let peak = 0, peakI = 0, e = 0;
+  for (let i=0; i<ir.length; i++) {
+    const x = ir[i];
+    e += x*x;
+    if (x > peak) { peak = x; peakI = i; }
+  }
+  const first = peakI / SAMPLE_RATE * 1000;
+  $("firstArrival").textContent = fmt(first, 1) + " ms";
+  $("energy").textContent = fmt(e, 3);
+
+  // Rough RT60 estimate from the late energy envelope.
+  let rt = NaN;
+  const start = Math.min(ir.length-1, Math.max(20, peakI + 30));
+  let e0 = 0;
+  for (let i=start; i<ir.length; i++) e0 += ir[i]*ir[i];
+  if (e0 > 1e-7) {
+    let target = e0 * 1e-6;
+    let tail = 0;
+    for (let i=start; i<ir.length; i++) {
+      tail += ir[i]*ir[i];
+      if (tail <= target) { rt = (i-start)/SAMPLE_RATE; break; }
+    }
+    if (!Number.isFinite(rt)) {
+      // Fallback using Schroeder-like regression.
+      let sx=0, sy=0, sxx=0, sxy=0, n=0;
+      for (let i=start; i<Math.min(ir.length, start+5000); i+=8) {
+        let en=0;
+        for (let j=i; j<Math.min(ir.length, i+32); j++) en += ir[j]*ir[j];
+        if (en > 1e-10) {
+          const x=i/SAMPLE_RATE, y=Math.log10(en);
+          sx += x; sy += y; sxx += x*x; sxy += x*y; n++;
+        }
+      }
+      const den=n*sxx-sx*sx;
+      if (n>10 && Math.abs(den)>1e-8) {
+        const slope=(n*sxy-sx*sy)/den;
+        if (slope<0) rt = -60/(10*slope);
+      }
+    }
+  }
+  $("rt60").textContent = Number.isFinite(rt) ? fmt(rt, 2) + " s (rough)" : "—";
+}
+
+function draw() {
+  const p = sceneParams();
+  const W = view.width, H = view.height;
+  ctx2d.clearRect(0,0,W,H);
+
+  const margin = 55;
+  const sx = (W-2*margin)/p.width;
+  const sy = (H-2*margin)/p.depth;
+  const s = Math.min(sx, sy);
+  const ox = (W-p.width*s)/2;
+  const oy = (H-p.depth*s)/2;
+
+  const tx = x => ox + x*s;
+  const ty = y => oy + y*s;
+
+  ctx2d.fillStyle="#0a0d13";
+  ctx2d.fillRect(0,0,W,H);
+  ctx2d.strokeStyle="#273348";
+  ctx2d.lineWidth=2;
+  ctx2d.strokeRect(tx(0),ty(0),p.width*s,p.depth*s);
+
+  // Soft grid.
+  ctx2d.strokeStyle="#151d29";
+  ctx2d.lineWidth=1;
+  for (let x=1; x<p.width; x++) { ctx2d.beginPath(); ctx2d.moveTo(tx(x),ty(0)); ctx2d.lineTo(tx(x),ty(p.depth)); ctx2d.stroke(); }
+  for (let y=1; y<p.depth; y++) { ctx2d.beginPath(); ctx2d.moveTo(tx(0),ty(y)); ctx2d.lineTo(tx(p.width),ty(y)); ctx2d.stroke(); }
+
+  // Debug rays from GPU: first and second hit positions.
+  if (lastDebug) {
+    const src = [p.width*0.22, p.depth*0.25];
+    ctx2d.lineWidth=1;
+    for (let i=0; i<DEBUG_RAYS; i++) {
+      const a=i*2*4, b=a+4;
+      const p1=[lastDebug[a],lastDebug[a+1]];
+      const p2=[lastDebug[b],lastDebug[b+1]];
+      ctx2d.strokeStyle = "rgba(255,189,105,.22)";
+      ctx2d.beginPath(); ctx2d.moveTo(tx(src[0]),ty(src[1])); ctx2d.lineTo(tx(p1[0]),ty(p1[1])); ctx2d.stroke();
+      if (Number.isFinite(p2[0]) && (p2[0]||p2[1])) {
+        ctx2d.strokeStyle = "rgba(255,111,145,.18)";
+        ctx2d.beginPath(); ctx2d.moveTo(tx(p1[0]),ty(p1[1])); ctx2d.lineTo(tx(p2[0]),ty(p2[1])); ctx2d.stroke();
+      }
+    }
+  }
+
+  // Obstacle (top-down projection).
+  const cx=p.width*0.5, cy=p.depth*0.58, r=.85;
+  ctx2d.fillStyle="#3a1f2d";
+  ctx2d.strokeStyle="#ff6f91";
+  ctx2d.lineWidth=2;
+  ctx2d.beginPath(); ctx2d.arc(tx(cx),ty(cy),r*s,0,Math.PI*2); ctx2d.fill(); ctx2d.stroke();
+
+  // Source.
+  const src=[p.width*0.22,p.depth*0.25];
+  ctx2d.fillStyle="#74b9ff"; ctx2d.beginPath(); ctx2d.arc(tx(src[0]),ty(src[1]),7,0,Math.PI*2); ctx2d.fill();
+  ctx2d.fillStyle="#cfe3ff"; ctx2d.font="600 12px system-ui"; ctx2d.fillText("SOURCE",tx(src[0])+10,ty(src[1])-10);
+
+  // Listener.
+  const lis=[p.width*0.73,p.depth*0.67];
+  ctx2d.fillStyle="#7ce7ad"; ctx2d.beginPath(); ctx2d.arc(tx(lis[0]),ty(lis[1]),7,0,Math.PI*2); ctx2d.fill();
+  ctx2d.strokeStyle="#7ce7ad66"; ctx2d.lineWidth=1;
+  ctx2d.beginPath(); ctx2d.arc(tx(lis[0]),ty(lis[1]),p.receiver*s,0,Math.PI*2); ctx2d.stroke();
+  ctx2d.fillStyle="#d7ffe8"; ctx2d.fillText("LISTENER",tx(lis[0])+10,ty(lis[1])-10);
+
+  // IR mini-chart.
+  if (lastIR) {
+    const gx=24, gy=H-90, gw=W-48, gh=55;
+    ctx2d.fillStyle="#0f141d"; ctx2d.fillRect(gx,gy,gw,gh);
+    ctx2d.strokeStyle="#283448"; ctx2d.strokeRect(gx,gy,gw,gh);
+    ctx2d.beginPath();
+    for (let i=0;i<lastIR.length;i+=8) {
+      const x=gx + i/lastIR.length*gw;
+      const y=gy+gh-clamp(lastIR[i]*gh*2.2,0,gh);
+      if (i===0) ctx2d.moveTo(x,y); else ctx2d.lineTo(x,y);
+    }
+    ctx2d.strokeStyle="#76a9ff"; ctx2d.lineWidth=1.4; ctx2d.stroke();
+    ctx2d.fillStyle="#93a2b7"; ctx2d.font="11px system-ui";
+    ctx2d.fillText("GPU-estimated impulse response",gx+8,gy+16);
+  }
+}
+
+function setStatus(t) { statusEl.textContent = t; }
+
+function createAudio() {
+  if (audio) return;
+  const ac = new AudioContext({latencyHint:"interactive"});
+  const osc = ac.createOscillator();
+  const master = ac.createGain();
+  const dry = ac.createGain();
+  const convolver = ac.createConvolver();
+  const wet = ac.createGain();
+  const analyser = ac.createAnalyser();
+
+  osc.type="sawtooth";
+  osc.frequency.value=sceneParams().frequency;
+  master.gain.value=0.20;
+  wet.gain.value=0.95;
+  dry.gain.value=0.05;
+
+  osc.connect(dry); dry.connect(master);
+  osc.connect(convolver); convolver.connect(wet); wet.connect(master);
+  master.connect(analyser); analyser.connect(ac.destination);
+
+  audio = {ac, osc, master, dry, convolver, wet, analyser, running:true};
+  $("start").textContent="Audio running";
+  $("start").disabled=true;
+  if (lastIR) updateConvolver(lastIR);
+  osc.start();
+  ac.resume();
+}
+
+function updateConvolver(ir) {
+  if (!audio) return;
+  const buf=audio.ac.createBuffer(1, ir.length, SAMPLE_RATE);
+  buf.copyToChannel(ir,0);
+  audio.convolver.buffer=buf;
+}
+
+$("start").addEventListener("click", createAudio);
+$("mute").addEventListener("click", () => {
+  if (!audio) return;
+  audio.master.gain.value = audio.master.gain.value > 0 ? 0 : 0.20;
+});
+$("freq").addEventListener("input", () => {
+  if (audio) audio.osc.frequency.setTargetAtTime(sceneParams().frequency, audio.ac.currentTime, .02);
+});
+
+$("retrace").addEventListener("click", trace);
+$("retrace2").addEventListener("click", trace);
+
+async function boot() {
+  draw();
+  try {
+    gpu = await initGPU();
+    tracer = makeTracer(gpu.device);
+    setStatus("WebGPU ready — first trace running");
+    await trace();
+
+    // Periodically retrace so the effect responds if the user tweaks inputs.
+    setInterval(() => {
+      if (dirty && !tracing && performance.now() - lastTraceAt > 250) trace();
+    }, 150);
+  } catch (err) {
+    console.error(err);
+    setStatus("WebGPU unavailable: " + err.message);
+    $("start").disabled = true;
+  }
+}
+boot();
+</script>
+</body>
+</html>
