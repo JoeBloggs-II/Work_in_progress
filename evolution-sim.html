@@ -20,7 +20,7 @@ button,select{background:var(--panel2);color:var(--text);border:1px solid var(--
 </head>
 <body>
 <header><div><h1>Open Ecosystem <span style="font-size:10px;color:var(--dim);font-weight:400">— living world</span></h1>
-<p class="sub">An evolving open ecosystem: neural controllers, heritable learning strategies, layered habitats, real seasonal pressure and a long, gradually fading founder period.</p></div></header>
+<p class="sub">An evolving multicellular ecosystem: chemical signalling, lifetime-learned reward and meta-learning, novel ligands, physical coastal boundaries and a gradually fading founder phase.</p></div></header>
 <div class="bar">
  <button id="playBtn">▶ Run</button><button id="resetBtn">↺ New world</button>
  <button id="s1" class="on">1×</button><button id="s4">4×</button><button id="s8">8×</button><button id="turboBtn" title="Run simulation at maximum available speed, drawing only every 500ms">⚡ Turbo (max)</button>
@@ -30,6 +30,7 @@ button,select{background:var(--panel2);color:var(--text);border:1px solid var(--
  <span class="stat">Tick <b id="ticks">0</b></span>
  <span class="stat">Population <b id="pop">26</b></span>
  <span class="stat">Food <b id="foodCount">—</b></span>
+ <span class="stat">Ligands <b id="chemStatus">4 / 12</b></span>
  <span class="stat">Season <b id="season">—</b></span>
 </div>
 <div id="workspace">
@@ -58,10 +59,21 @@ button,select{background:var(--panel2);color:var(--text);border:1px solid var(--
    <div class="minirow"><span>Average learning interval</span><b id="mInterval">—</b></div>
    <div class="minirow"><span>Average perturbation size</span><b id="mSigma">—</b></div>
    <div class="minirow"><span>Average brain connections</span><b id="mBrain">—</b></div>
-   <div class="minirow"><span>Mean food / mating reward</span><b id="mRewards">—</b></div>
+   <div class="minirow"><span>Mean food / mating ligand valence</span><b id="mRewards">—</b></div>
    <div class="minirow"><span>Avg net travel / 250 ticks</span><b id="mTravel">—</b></div>
    <div class="minirow"><span>Exploring / alive</span><b id="mExplorers">—</b></div>
    <div class="minirow"><span>Avg lifetime range</span><b id="mRange">—</b></div>
+  </section>
+  <section class="panel"><h2>Chemical intelligence</h2>
+   <div class="hint">Ligands have no built-in purpose. Evolved gland cells release them; receptor valence and meta-plasticity can be learned during life. New ligand types initially mean nothing.</div>
+   <div class="minirow"><span>Mean cells / specialised glands</span><b id="mCells">—</b></div>
+   <div class="minirow"><span>Mean active ligand types</span><b id="mChemTypes">—</b></div>
+   <div class="minirow"><span>Novel ligand mutations</span><b id="mNewSignals">0</b></div>
+   <div class="minirow"><span>Mean chemical concentration</span><b id="mChemLevel">—</b></div>
+   <div class="minirow"><span>Mean meta-plasticity</span><b id="mPlastic">—</b></div>
+   <div class="minirow"><span>Lifetime receptor updates</span><b id="mChemLearning">0</b></div>
+   <div class="minirow"><span>Lifetime receptor drift</span><b id="mDrift">—</b></div>
+   <div class="minirow"><span>Total secretion energy spent</span><b id="mChemCost">0</b></div>
   </section>
   <section class="panel"><h2>Population history</h2><canvas id="historyCanvas" aria-label="Recent history chart"></canvas>
     <div class="chartlegend"><span><i style="background:#89e995"></i>Population</span><span><i style="background:#e9cc7d"></i>Food</span><span><i style="background:#89c5fb"></i>Avg energy</span></div><p class="hint">Lines independently scaled. Snapshots taken every 100 ticks.</p></section>
@@ -70,13 +82,14 @@ button,select{background:var(--panel2);color:var(--text);border:1px solid var(--
    <div class="minirow"><span>Available food / total patches</span><b id="mSupply">—</b></div>
    <div class="minirow"><span>World average soil fertility</span><b id="mSoil">—</b></div>
    <div class="minirow"><span>World biome diversity</span><b id="mBiomes">—</b></div>
+   <div class="minirow"><span>Ocean exposures</span><b id="mOcean">0</b></div>
    <h3>Biome key</h3><div class="biomeKey" id="biomeKey"></div>
   </section>
   <section class="panel"><h2>Creature inspector</h2><div id="inspector" class="hint">Click a coloured creature in the world to inspect its genome, learning record and habitat.</div></section>
   <section class="panel"><h2>Recent events</h2><div id="log">World forming…</div></section>
  </aside>
 </div>
-<footer><b>Founder phase:</b> rich founding habitats, then a long and gradually tightening ecology. Temporary learning feedback rewards real travel, novel territory and progress toward food; it changes neither energy nor reproduction and reaches zero at the end. Directional feet make crawling mechanically possible, but gaits are not scripted; extinction remains possible. Turbo changes speed only.</footer>
+<footer><b>Chemical cognition:</b> 12 possible ligands; endocrine glands pulse them into slow-fading internal chemistry. Genetic and individually learned receptors read each ligand as motivation, aversion or learning-rate modulation. Secretion costs actual energy; survival and offspring remain ecological, not fabricated reward. The 6,800 × 4,000 world has an irregular encircling escarpment and frigid outer ocean. Turbo changes speed only.</footer>
 <script>
 const cv=document.getElementById('c'),ctx=cv.getContext('2d');
 function rnd(a,b){return a+Math.random()*(b-a)}
@@ -85,13 +98,14 @@ function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
 function tanh(x){return Math.tanh(x)}
 
 // ---- fixed biology ----
-const WORLD_W=2400, WORLD_H=1400;
+const WORLD_W=6800, WORLD_H=4000;
 const CONNECT_R=34, STIFF=0.26, ITERS=3, DRAG=0.985, DRAGQ=0.006, MAXPULL=0.4;
 const BASE_METAB=0.006, MUSCLE_COST=0.012, EAT_RADIUS=16, SENSOR_RANGE=200;
 const REPRO_ENERGY_MIN=65, REPRO_BASE=18, REPRO_PER_NODE=2.6, CHILD_START_E=48, MATE_RANGE=34, MATE_COOLDOWN=260, MATE_SCORE_T=0.62, COMPAT_T=0.85;
-const SENESCENCE_K=0.0000006, LUCK_HAZARD=0.000009, POP_CAP=140, START_E=100;
-const MAXH=12, MAXCONN=50;
-const FOOD_NORMAL=220, FOOD_FOUNDER=720, SENSOR_COUNT=15;
+const SENESCENCE_K=0.00000006, LUCK_HAZARD=0.0000018, POP_CAP=140, START_E=100;
+const MAXH=20, MAXCONN=105;
+const CHEM_COUNT=12, CHEM_SENSOR_START=15, SENSOR_COUNT=CHEM_SENSOR_START+CHEM_COUNT;
+const FOOD_NORMAL=780, FOOD_FOUNDER=1700;
 let founderEnd=180000; const FOUNDER_HOLD_FRACTION=0.03;
 const WORLD_TICKS_PER_YEAR=4800;
 // Playback speed does not change carrying capacity or natural-selection rules.
@@ -106,15 +120,16 @@ function founderStrength(){
 }
 
 // ---- persistent terrain, hydrology, climate and living biomes ----
-const GRID_W=240, GRID_H=140;
+const GRID_W=340, GRID_H=200, MAP_W=680, MAP_H=400;
 const BIOMES=[
  {name:'River / lake',color:[46,99,125]}, {name:'Wetlands',color:[54,109,91]},
  {name:'Forest',color:[55,116,67]}, {name:'Grassland',color:[114,151,83]},
  {name:'Scrubland',color:[142,128,78]}, {name:'Desert',color:[182,154,104]},
- {name:'Highlands',color:[124,129,113]}, {name:'Meadow',color:[129,174,98]}
+ {name:'Highlands',color:[124,129,113]}, {name:'Meadow',color:[129,174,98]},
+ {name:'Outer ocean',color:[28,68,105]}
 ];
 let seed={a:rnd(0,10000),b:rnd(0,10000),c:rnd(0,10000),d:rnd(0,10000)};
-let terrain=new Array(GRID_W*GRID_H); let biomeTex=document.createElement('canvas'); biomeTex.width=480;biomeTex.height=280;
+let terrain=new Array(GRID_W*GRID_H); let biomeTex=document.createElement('canvas'); biomeTex.width=MAP_W;biomeTex.height=MAP_H;
 let bakedLayer='';let worldMeanSoil=0,biomeCounts=Array(BIOMES.length).fill(0);
 function noise2(x,y,off){const ix=Math.floor(x),iy=Math.floor(y),u=x-ix,v=y-iy;const f=t=>t*t*(3-2*t);
  const h=(a,b)=>{let n=Math.sin(a*127.1+b*311.7+off*74.7)*43758.5453123;return n-Math.floor(n)};
@@ -141,12 +156,20 @@ function bakeBiome(){
   const high=fbm(wx*.00145,wy*.00145,seed.a), detail=fbm(wx*.004,wy*.004,seed.b);
   const elevation=clamp(.08+.90*high+.18*(detail-.5)+.20*Math.sin(wx*.0012+seed.b)*Math.cos(wy*.002+seed.a),0,1);
   const riverD=Math.abs(wy-riverAt(wx)),river=(riverD<15+7*Math.sin(wx*.007+seed.c)&&elevation<.71);
-  const water=elevation<.265||river;
-  const moisture=clamp(.11+.90*fbm(wx*.00195,wy*.0021,seed.c)+.23*Math.exp(-riverD/170)-.15*Math.max(0,elevation-.64),0,1);
-  const temp=clamp(.79-.26*wy/WORLD_H-.37*Math.max(0,elevation-.52)+.14*(fbm(wx*.002,wy*.002,seed.d)-.5),0,1);
+  // Irregular outer ocean + steep coastal escarpment. The land cannot be left by
+  // simply walking into an artificial canvas boundary; there is a real, distant
+  // impassable mountain rim, then cold deep ocean beyond it.
+  const edgeD=Math.min(wx,WORLD_W-wx,wy,WORLD_H-wy) + (noise2(wx*.0013,wy*.0013,seed.b)-.5)*155;
+  const ocean=edgeD<650;
+  const cliff=ocean?0:Math.exp(-Math.pow((edgeD-855)/128,2));
+  const water=ocean||elevation<.265||river;
+  const moisture=clamp(.11+.90*fbm(wx*.00195,wy*.0021,seed.c)+.23*Math.exp(-riverD/170)-.15*Math.max(0,elevation-.64)+(ocean?.3:0),0,1);
+  const temp=clamp(.79-.26*wy/WORLD_H-.37*Math.max(0,elevation-.52)+.14*(fbm(wx*.002,wy*.002,seed.d)-.5)-.30*cliff,0,1);
   const fertility=water?0:clamp(.06+.80*moisture+.19*(detail-.5)-.65*Math.max(0,elevation-.66)-.58*Math.max(0,temp-.77),.02,.99);
   let biome;
-  if(water)biome=0;
+  if(ocean)biome=8;
+  else if(cliff>.35)biome=6;
+  else if(water)biome=0;
   else if(elevation>.70)biome=6;
   else if(moisture>.73 && elevation<.57)biome=1;
   else if(moisture>.66 && temp>.43)biome=2;
@@ -154,7 +177,7 @@ function bakeBiome(){
   else if(moisture<.51)biome=4;
   else if(temp<.52 || elevation>.61)biome=7;
   else biome=3;
-  terrain.push({elevation,moisture,temp,fertility,water,biome});biomeCounts[biome]++;
+  terrain.push({elevation:Math.max(elevation,cliff*.94),moisture,temp,fertility:cliff>.35?.01:fertility,water,biome,ocean,cliff,blocked:cliff>.72});biomeCounts[biome]++;
   worldMeanSoil+=fertility;
  }
  for(let y=0;y<GRID_H;y++)for(let x=0;x<GRID_W;x++){
@@ -168,9 +191,9 @@ function bakeBiome(){
 function rebuildMapLayer(){
  const layer=document.getElementById('mapLayer')?.value||'biome';
  if(layer===bakedLayer)return; bakedLayer=layer;
- const bctx=biomeTex.getContext('2d'),img=bctx.createImageData(480,280);
- for(let y=0;y<280;y++)for(let x=0;x<480;x++){
-  const t=terrain[Math.min(GRID_H-1,Math.floor(y/2))*GRID_W+Math.min(GRID_W-1,Math.floor(x/2))];
+ const bctx=biomeTex.getContext('2d'),img=bctx.createImageData(MAP_W,MAP_H);
+ for(let y=0;y<MAP_H;y++)for(let x=0;x<MAP_W;x++){
+  const t=terrain[Math.min(GRID_H-1,Math.floor(y/MAP_H*GRID_H))*GRID_W+Math.min(GRID_W-1,Math.floor(x/MAP_W*GRID_W))];
   let col;
   if(layer==='biome') {const c=BIOMES[t.biome].color;const shade=.79+.32*t.elevation +.13*(t.fertility-.5);
     col=c.map(v=>v*shade);}
@@ -179,14 +202,14 @@ function rebuildMapLayer(){
   else if(layer==='moisture')col=[66+t.moisture*38,78+t.moisture*147,49+t.moisture*196];
   else col=[50+t.temp*205,108+t.temp*85,205-t.temp*145];
   const variation=(noise2(x*.71,y*.71,seed.c)-.5)*12;
-  const i=(y*480+x)*4;img.data[i]=col[0]+variation;img.data[i+1]=col[1]+variation;img.data[i+2]=col[2]+variation;img.data[i+3]=255;
+  const i=(y*MAP_W+x)*4;img.data[i]=col[0]+variation;img.data[i+1]=col[1]+variation;img.data[i+2]=col[2]+variation;img.data[i+3]=255;
  }
  bctx.putImageData(img,0,0);
 }
 const rocks=[];
-function seedRocks(){rocks.length=0;for(let i=0;i<70;i++){
+function seedRocks(){rocks.length=0;for(let i=0;i<180;i++){
  for(let a=0;a<18;a++){const x=rnd(100,WORLD_W-100),y=rnd(70,WORLD_H-70),t=terrainAt(x,y);
- if(!t.water&&(t.biome===6||t.biome===4||Math.random()<.10)){
+ if(!t.water&&!t.blocked&&(t.biome===6||t.biome===4||Math.random()<.10)){
   rocks.push({x,y,r:rnd(5,15),tone:rnd(0,1)});break;
  }}
 }}
@@ -201,12 +224,12 @@ function foodCandidate(center,spread=130){
  for(let k=0;k<10;k++){
   const x=center?clamp(center.x+gauss()*spread,35,WORLD_W-35):rnd(20,WORLD_W-20);
   const y=center?clamp(center.y+gauss()*spread,35,WORLD_H-35):rnd(20,WORLD_H-20);
-  const t=terrainAt(x,y);if(t.water)continue;
+  const t=terrainAt(x,y);if(t.water||t.blocked)continue;
   const q=t.fertility+(center?.22:0)+Math.random()*.32;
   if(q>score){score=q;best={x,y,t};}
  }
  if(best)return best;
- for(let k=0;k<300;k++){let x=rnd(20,WORLD_W-20),y=rnd(20,WORLD_H-20);if(!terrainAt(x,y).water)return {x,y,t:terrainAt(x,y)};}
+ for(let k=0;k<300;k++){let x=rnd(20,WORLD_W-20),y=rnd(20,WORLD_H-20);if(!terrainAt(x,y).water&&!terrainAt(x,y).blocked)return {x,y,t:terrainAt(x,y)};}
  return {x:WORLD_W/2,y:WORLD_H/2,t:terrainAt(WORLD_W/2,WORLD_H/2)};
 }
 function seedFood(){
@@ -214,7 +237,7 @@ function seedFood(){
  // Keep a permanent food base in the same fertile valleys as the founder colonies,
  // as well as open-world resources. This is habitat heterogeneity, not creature feeding.
  for(let i=0;i<FOOD_NORMAL;i++){
-  const center=i<140?founderColonies[i%founderColonies.length]:null;
+  const center=i<260?founderColonies[i%founderColonies.length]:null;
   const {x,y,t}=foodCandidate(center,center?110:undefined);
   const type=t.biome===1||t.biome===2?(Math.random()<.6?2:1):t.biome===3||t.biome===7?(Math.random()<.7?0:1):Math.random()<.7?0:1;
   foods.push({x,y,e:Math.random()<.94?1:0,t:0,type,biome:t.biome,founderOnly:false,threshold:0,active:true});
@@ -251,7 +274,7 @@ function stepFood(){
       const nx=clamp(f.x+gauss()*spread,15,WORLD_W-15);
       const ny=clamp(f.y+gauss()*spread,15,WORLD_H-15);
       const land=terrainAt(nx,ny);
-      if(!land.water && land.fertility>.25){f.x=nx;f.y=ny;f.biome=land.biome;break;}
+      if(!land.water && !land.blocked && land.fertility>.25){f.x=nx;f.y=ny;f.biome=land.biome;break;}
      }
     }
    }
@@ -261,7 +284,7 @@ function stepFood(){
 function foodSiteCount(){return foods.reduce((n,f)=>n+(f.active?1:0),0);}
 
 // A spatial index keeps food search practical in long maximum-speed runs.
-const FOOD_CELL=100;let foodGrid=new Map();
+const FOOD_CELL=115;let foodGrid=new Map();
 function foodKey(ix,iy){return ix+','+iy;}
 function buildFoodGrid(){
  foodGrid.clear();
@@ -281,10 +304,59 @@ function nearbyFood(x,y,maxR){
  return found;
 }
 
+// ---- multicellular physiology and long-lived chemical signalling ----
+// None of the ligand letters has any built-in value. Valence, metaplasticity,
+// gland triggers, receptor gains and clearance are organism-specific genes.
+// Offspring can introduce a *new* ligand whose initial valence and meta weights
+// are exactly zero. Neither a secretion nor high subjective reward creates food.
+const CHEM_LABELS=Array.from({length:CHEM_COUNT},(_,i)=>String.fromCharCode(65+i));
+const CELL_KINDS=['lightSensor','chemicalSensor','touchSensor','gut','storage','motorCell',
+                  'insulation','repair','rewardGland','aversiveGland','metaGland','neutralGland'];
+const GLAND_KINDS=new Set(['rewardGland','aversiveGland','metaGland','neutralGland']);
+const CELL_COLORS={lightSensor:'#fad88e',chemicalSensor:'#8bbce7',touchSensor:'#ccc1ae',
+ gut:'#b8db77',storage:'#8cbf96',motorCell:'#fb9d75',insulation:'#a5b7ba',repair:'#e6a1c5',
+ rewardGland:'#55efa6',aversiveGland:'#ec819b',metaGland:'#aa9dfb',neutralGland:'#75c9d8'};
+const GLAND_STIMULI=['feeding','breeding','energyDrop','lowEnergy','exploring','foodScent',
+                     'heat','wet','proximity','rhythm','random','none'];
+let novelSignalBirths=0, chemicalExpense=0, learnedReceptors=0, oceanExposures=0;
+function makeCell(kind,n,channel=0,stim='none'){
+ return {kind,anchor:Math.floor(rnd(0,n)),channel,stim,
+  amount:rnd(.20,.55),refractory:Math.floor(rnd(25,90)),threshold:rnd(.3,.8),
+  sensitivity:rnd(.65,1.35)};
+}
+function makeCells(n){
+ const cells=['lightSensor','chemicalSensor','touchSensor','gut','gut','storage',
+              'motorCell','insulation','repair'].map(k=>makeCell(k,n));
+ // These are initial *gland wiring* biases, not permanent reward definitions.
+ cells.push(makeCell('rewardGland',n,0,'feeding'),makeCell('aversiveGland',n,1,'energyDrop'),
+            makeCell('rewardGland',n,2,'breeding'),makeCell('metaGland',n,3,'exploring'));
+ return cells;
+}
+function makeNeurochem(){
+ const valence=Array(CHEM_COUNT).fill(0),meta=Array(CHEM_COUNT).fill(0);
+ valence[0]=.8;valence[1]=-.65;valence[2]=.48;meta[3]=.58;
+ return {active:[0,1,2,3],valence,meta,
+   halfLife:Array.from({length:CHEM_COUNT},()=>Math.floor(rnd(190,950))),
+   gain:Array.from({length:CHEM_COUNT},()=>rnd(.6,1.4)),
+   rewardPlasticity:rnd(.015,.035),metaPlasticity:rnd(.006,.018)};
+}
+function repairChemistry(g){
+ g.neurochem ||= makeNeurochem();
+ g.cells ||= makeCells(g.nodes.length);
+ g.cells.forEach(c=>c.anchor=((c.anchor%g.nodes.length)+g.nodes.length)%g.nodes.length);
+}
+function cellCount(g,k){return g.cells.reduce((n,c)=>n+(c.kind===k),0);}
+function cellPhysiology(g){return {
+  gut:cellCount(g,'gut'),storage:cellCount(g,'storage'),
+  insulation:cellCount(g,'insulation'),repair:cellCount(g,'repair'),
+  chemicalSensor:cellCount(g,'chemicalSensor'),lightSensor:cellCount(g,'lightSensor'),
+  motorCell:cellCount(g,'motorCell'), glands:g.cells.filter(c=>GLAND_KINDS.has(c.kind))
+ };}
+
 // ---- genome ----
 let sidCounter=1;
 function newBody(){
-  const n=Math.floor(rnd(4,7)); const nodes=[]; for(let i=0;i<n;i++)nodes.push({x:rnd(-20,20),y:rnd(-20,20),grip:rnd(.25,.91),bristle:rnd(.018,.075),bristleAngle:rnd(0,Math.PI*2)});
+  const n=Math.floor(rnd(5,9)); const nodes=[]; for(let i=0;i<n;i++)nodes.push({x:rnd(-20,20),y:rnd(-20,20),grip:rnd(.25,.91),bristle:rnd(.018,.075),bristleAngle:rnd(0,Math.PI*2)});
   const springs=[];
   for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){
     const dx=nodes[i].x-nodes[j].x, dy=nodes[i].y-nodes[j].y;
@@ -303,15 +375,14 @@ function ensureConnected(nodes,springs){
 }
 function newGenome(){
   const {nodes,springs}=newBody();
-  const rw=[1,1,0,0,0,0,0,0,0,0].map(v=>v+rnd(-0.05,0.05));
   return {
     nodes,springs,
     scale:rnd(0.8,1.2), hue:rnd(0,360),
     tag:[rnd(-1,1),rnd(-1,1),rnd(-1,1)],
     pref:{size:rnd(0.7,1.4),hue:rnd(0,360),tagW:rnd(0,1)},
-    maxAge:rnd(11000,21000),generation:0,
+    maxAge:rnd(55000,95000),generation:0,
     rhythm:rnd(0.07,0.22),
-    reward:{w:rw},
+    cells:makeCells(nodes.length),neurochem:makeNeurochem(),
     learn:{interval:Math.round(rnd(38,53)), sigma:rnd(0.14,0.24), edits:Math.floor(rnd(1,4))},
     brain:{hidden:[], nextH:0, conn:emptyConn(springs)}
   };
@@ -326,6 +397,7 @@ function emptyConn(springs){
   conn.push({from:'s'+Math.floor(rnd(13,15)),to,w:rnd(-1.15,1.15)});
   conn.push({from:'s'+Math.floor(rnd(4,6)),to,w:rnd(-.55,.55)});
   if(Math.random()<.60)conn.push({from:'s'+Math.floor(rnd(13,15)),to,w:rnd(-.8,.8)});
+  if(Math.random()<.38)conn.push({from:'s'+Math.floor(rnd(CHEM_SENSOR_START,CHEM_SENSOR_START+4)),to,w:rnd(-.45,.45)});
  }
  return conn;
 }
@@ -358,12 +430,46 @@ function mutateBody(g){
   g.pref.size=clamp(g.pref.size+(Math.random()<R?gauss()*0.15:0),0.4,2);
   g.pref.hue=(g.pref.hue+(Math.random()<R?gauss()*25:0)+360)%360;
   g.pref.tagW=clamp(g.pref.tagW+(Math.random()<R?gauss()*0.2:0),0,1);
-  g.maxAge=clamp(g.maxAge+(Math.random()<R?gauss()*420:0),7000,29000);
+  g.maxAge=clamp(g.maxAge+(Math.random()<R?gauss()*1700:0),30000,180000);
   g.rhythm=clamp((g.rhythm??.14)+(Math.random()<R?gauss()*.014:0),.035,.35);
 }
-function mutateReward(g){
-  g.reward.w=g.reward.w.map(v=>clamp(v+(Math.random()<0.12?gauss()*0.35:0),-2,2));
-  if(Math.random()<0.05){ const i=Math.floor(rnd(0,10)); g.reward.w[i]=rnd(-1.5,1.5); }
+function mutateChemistry(g){
+ repairChemistry(g);
+ const ch=g.neurochem;
+ for(const i of ch.active){
+  if(Math.random()<.18)ch.valence[i]=clamp(ch.valence[i]+gauss()*.16,-2,2);
+  if(Math.random()<.14)ch.meta[i]=clamp(ch.meta[i]+gauss()*.085,-1.2,1.2);
+  if(Math.random()<.15)ch.halfLife[i]=Math.round(clamp(ch.halfLife[i]+gauss()*80,60,3000));
+  if(Math.random()<.16)ch.gain[i]=clamp(ch.gain[i]+gauss()*.12,.1,2.3);
+ }
+ if(Math.random()<.16)ch.rewardPlasticity=clamp(ch.rewardPlasticity+gauss()*.004,.002,.10);
+ if(Math.random()<.14)ch.metaPlasticity=clamp(ch.metaPlasticity+gauss()*.002,.001,.07);
+ if(Math.random()<.15&&g.cells.length<29)g.cells.push(makeCell(CELL_KINDS[Math.floor(rnd(0,CELL_KINDS.length))],g.nodes.length,
+   ch.active[Math.floor(rnd(0,ch.active.length))],GLAND_STIMULI[Math.floor(rnd(0,GLAND_STIMULI.length))]));
+ if(Math.random()<.08&&g.cells.length>8)g.cells.splice(Math.floor(rnd(0,g.cells.length)),1);
+ if(Math.random()<.20){const c=g.cells[Math.floor(rnd(0,g.cells.length))];
+  if(Math.random()<.24)c.kind=CELL_KINDS[Math.floor(rnd(0,CELL_KINDS.length))];
+  if(Math.random()<.32)c.anchor=Math.floor(rnd(0,g.nodes.length));
+  if(Math.random()<.24)c.stim=GLAND_STIMULI[Math.floor(rnd(0,GLAND_STIMULI.length))];
+  if(Math.random()<.24)c.channel=ch.active[Math.floor(rnd(0,ch.active.length))];
+  if(Math.random()<.24)c.amount=clamp(c.amount+gauss()*.1,.04,1.8);
+  if(Math.random()<.20)c.refractory=Math.round(clamp(c.refractory+gauss()*14,5,190));
+ }
+ // The next ligand in the alphabet did not exist in the ancestral chemistry.
+ // A mutation opens it with no initial effect; brain/receptor mutations must
+ // subsequently discover how to use this new signal.
+ if(ch.active.length<CHEM_COUNT&&Math.random()<.055){
+  const i=ch.active.length;ch.active.push(i);
+  ch.valence[i]=0;ch.meta[i]=0;
+  g.cells.push(makeCell('neutralGland',g.nodes.length,i,GLAND_STIMULI[Math.floor(rnd(0,GLAND_STIMULI.length-1))]));
+  // Open a dormant sensory route with exactly zero weight. Lifetime learning
+  // or later mutation must establish any behavioural meaning.
+  if(g.brain.conn.length<MAXCONN){const targets=g.springs.filter(s=>s.muscle);
+   if(targets.length)g.brain.conn.push({from:'s'+(CHEM_SENSOR_START+i),to:'m'+targets[Math.floor(rnd(0,targets.length))].id,w:0});
+  }
+  novelSignalBirths++;
+ }
+ g.cells.forEach(c=>c.anchor%=g.nodes.length);
 }
 function mutateLearning(g){
   if(!g.learn) g.learn={interval:45,sigma:0.2,edits:2};
@@ -384,7 +490,7 @@ function mutateBrain(g){
   b.conn=b.conn.map(c=>({...c, w:c.w+(Math.random()<0.2?gauss()*0.3:0)}));
   pruneConn(g);
 }
-function mutate(g){ const m=cloneG(g); mutateBody(m); mutateBrain(m); mutateReward(m); mutateLearning(m); return m; }
+function mutate(g){ const m=cloneG(g); mutateBody(m); mutateBrain(m); mutateChemistry(m); mutateLearning(m); return m; }
 function cross(a,b){
   const c=cloneG(Math.random()<0.5?a:b);
   c.scale=Math.random()<0.5?a.scale:b.scale; c.hue=Math.random()<0.5?a.hue:b.hue;
@@ -392,7 +498,20 @@ function cross(a,b){
   c.pref={size:Math.random()<0.5?a.pref.size:b.pref.size, hue:Math.random()<0.5?a.pref.hue:b.pref.hue, tagW:Math.random()<0.5?a.pref.tagW:b.pref.tagW};
   c.maxAge=Math.random()<0.5?a.maxAge:b.maxAge;
   c.rhythm=Math.random()<.5?(a.rhythm??.14):(b.rhythm??.14);
-  c.reward={w:a.reward.w.map((v,i)=>Math.random()<0.5?v:b.reward.w[i])};
+  // Genotype crosses gland blueprints and ligand/receptor traits, not learned
+  // lifetime chemical valuations; the latter die with the parent.
+  repairChemistry(a);repairChemistry(b);
+  c.cells=[...a.cells.filter(()=>Math.random()<.58),...b.cells.filter(()=>Math.random()<.46)]
+   .slice(0,29).map(x=>({...x,anchor:x.anchor%c.nodes.length}));
+  if(c.cells.length<7)c.cells=makeCells(c.nodes.length);
+  const ca=a.neurochem,cb=b.neurochem;
+  c.neurochem={active:Array.from({length:Math.max(ca.active.length,cb.active.length)},(_,i)=>i),
+   valence:ca.valence.map((x,i)=>Math.random()<.5?x:cb.valence[i]),
+   meta:ca.meta.map((x,i)=>Math.random()<.5?x:cb.meta[i]),
+   halfLife:ca.halfLife.map((x,i)=>Math.random()<.5?x:cb.halfLife[i]),
+   gain:ca.gain.map((x,i)=>Math.random()<.5?x:cb.gain[i]),
+   rewardPlasticity:Math.random()<.5?ca.rewardPlasticity:cb.rewardPlasticity,
+   metaPlasticity:Math.random()<.5?ca.metaPlasticity:cb.metaPlasticity};
   const la=a.learn||{interval:45,sigma:0.2,edits:2}, lb=b.learn||{interval:45,sigma:0.2,edits:2};
   c.learn={interval:Math.random()<0.5?la.interval:lb.interval, sigma:Math.random()<0.5?la.sigma:lb.sigma, edits:Math.random()<0.5?la.edits:lb.edits};
   pruneConn(c);
@@ -410,11 +529,12 @@ function forwardBrain(cre){
   return motorOut;
 }
 
-let creatures=[], ticks=0, births=0, deaths=0, starvationDeaths=0, ageDeaths=0, hazardDeaths=0, migrations=0, acceptedTrials=0, rejectedTrials=0, cid=1, nearCache=null, worldEpoch=0, immigration=true, selectedId=null, camX=WORLD_W/2, camY=WORLD_H/2, camScale=1.2, autoFollow=true;
+let creatures=[], ticks=0, births=0, deaths=0, starvationDeaths=0, ageDeaths=0, hazardDeaths=0, migrations=0, acceptedTrials=0, rejectedTrials=0, cid=1, nearCache=null, worldEpoch=0, immigration=true, selectedId=null, camX=WORLD_W/2, camY=WORLD_H/2, camScale=3.55, autoFollow=true;
 const history=[],eventLog=[];
 function addLog(s){eventLog.unshift(s);if(eventLog.length>15)eventLog.pop();}
 function spawn(genome,x,y){
   const cur=genome.nodes.map(n=>({x:x+n.x*genome.scale,y:y+n.y*genome.scale}));
+  repairChemistry(genome);
   const effW=genome.brain.conn.map(c=>c.w);
   const center={x:cur.reduce((a,p)=>a+p.x,0)/cur.length,y:cur.reduce((a,p)=>a+p.y,0)/cur.length};
   creatures.push({id:cid++, genome, cur, center, old:cur.map(p=>({...p})), energy:START_E, age:0, cooldown:0, neur:{}, alive:true,
@@ -422,20 +542,25 @@ function spawn(genome,x,y){
     windowStart:{x,y},visitedCells:new Set([Math.floor(x/28)+','+Math.floor(y/28)]),newCellsWindow:0,
     trail:[],travel250:0,birthX:x,birthY:y,maxRange:0,
     ateThisTick:false,bredThisTick:false,foodEaten:0,offspring:0,accepted:0,rejected:0,
-    moveDistance:0,lastX:x,lastY:y});
+    moveDistance:0,lastX:x,lastY:y,
+    chemistry:new Float32Array(CHEM_COUNT),cellCooldown:genome.cells.map(()=>0),cellFlashes:[],
+    chemValence:genome.neurochem.valence.slice(),chemMeta:genome.neurochem.meta.slice(),
+    windowPulse:new Float32Array(CHEM_COUNT),windowEnergy:START_E,windowFood:0,windowBirths:0,
+    outcomeEMA:0,plasticity:1,chemicalSpent:0,receptorDrift:0,oceanTicks:0,
+    maxEnergy:Math.min(132,START_E+4*cellCount(genome,'storage')),tissue:100});
 }
 function richFounderCenter(){
  let best=null,br=-1;
  for(let i=0;i<100;i++){
-  const x=rnd(180,WORLD_W-180),y=rnd(160,WORLD_H-160),t=terrainAt(x,y);
-  if(t.water||t.biome===6)continue;
+  const x=rnd(1150,WORLD_W-1150),y=rnd(1150,WORLD_H-1150),t=terrainAt(x,y);
+  if(t.water||t.blocked||t.biome===6)continue;
   const r=t.fertility;if(r>br){best={x,y};br=r;}if(r>.79)break;
  }
  return best||{x:WORLD_W/2,y:WORLD_H/2};
 }
 function seedPopulation(){
  creatures=[];
- const hub=richFounderCenter();
+ const hub=richFounderCenter();camX=hub.x;camY=hub.y;
  // Four genetically diverse families share a single fertile valley during
  // founding, so the initial population has a real chance to meet and breed.
  founderColonies=Array.from({length:4},()=>({
@@ -450,14 +575,14 @@ function seedPopulation(){
   let x=q.x,y=q.y;
   for(let attempt=0;attempt<20;attempt++){
    const nx=clamp(q.x+gauss()*17,65,WORLD_W-65),ny=clamp(q.y+gauss()*17,65,WORLD_H-65);
-   if(!terrainAt(nx,ny).water){x=nx;y=ny;break;}
+   if(!terrainAt(nx,ny).water&&!terrainAt(nx,ny).blocked){x=nx;y=ny;break;}
   }
   spawn(i<founderColonies.length?cloneG(ancestors[i]):mutate(ancestors[i%ancestors.length]),x,y);
  }
 }
 function resetWorld(){
  ticks=0;births=0;deaths=0;starvationDeaths=0;ageDeaths=0;hazardDeaths=0;migrations=0;foodEaten=0;
- acceptedTrials=0;rejectedTrials=0;nearCache=null;worldEpoch++;history.length=0;eventLog.length=0;
+ acceptedTrials=0;rejectedTrials=0;novelSignalBirths=0;chemicalExpense=0;learnedReceptors=0;oceanExposures=0;nearCache=null;worldEpoch++;history.length=0;eventLog.length=0;
  selectedId=null;cid=1;camX=WORLD_W/2;camY=WORLD_H/2;
  bakeBiome();seedRocks();seedPopulation();seedFood();buildFoodGrid();
  addLog('Tick 0 · Four founder colonies settled in fertile terrain.');recordHistory();
@@ -469,7 +594,7 @@ function startLearningTrial(cre){
   const count=Math.min(cre.effW.length,Math.max(1,Math.round(L.edits)));
   const chosen=new Set();
   while(chosen.size<count) chosen.add(Math.floor(rnd(0,cre.effW.length)));
-  for(const i of chosen) cre.effW[i]+=gauss()*L.sigma;
+  for(const i of chosen) cre.effW[i]+=gauss()*L.sigma*cre.plasticity;
 }
 
 function centroid(cre){ let x=0,y=0; for(const p of cre.cur){x+=p.x;y+=p.y} return {x:x/cre.cur.length,y:y/cre.cur.length}; }
@@ -495,12 +620,87 @@ function effectiveGrip(node,mx,my,water){
  const angle=node.bristleAngle??0,bias=node.bristle??0;
  return clamp((node.grip??.5)*(1+bias*(mx*Math.cos(angle)+my*Math.sin(angle)))*(water?.12:1),.015,.985);
 }
+function chemicalStimulus(stim,k){
+ switch(stim){
+  case 'feeding':return k.fed?1:0;
+  case 'breeding':return k.bred?1:0;
+  case 'energyDrop':return clamp(k.energyDrop/1.5,0,1);
+  case 'lowEnergy':return clamp((75-k.energy)/42,0,1);
+  case 'exploring':return k.newCell?1:0;
+  case 'foodScent':return k.nearFood?1:0;
+  case 'heat':return Math.max(0,k.heat-.71)*3;
+  case 'wet':return k.wet?1:0;
+  case 'proximity':return k.nearMate?1:0;
+  case 'rhythm':return k.rhythm>.8?1:0;
+  case 'random':return Math.random()<.013?1:0;
+  default:return 0;
+ }
+}
+function updateChemistry(cre,k){
+ const ng=cre.genome.neurochem, active=ng.active, physiology=cre.phys||cellPhysiology(cre.genome);
+ let burstReward=0,metaSum=0;
+ cre.cellFlashes.length=0;
+ for(const ch of active)cre.chemistry[ch]*=Math.exp(-Math.LN2/ng.halfLife[ch]);
+ for(let j=0;j<physiology.glands.length;j++){
+  const cell=physiology.glands[j],index=cre.genome.cells.indexOf(cell);
+  if(cre.cellCooldown[index]>0){cre.cellCooldown[index]--;continue;}
+  const strength=chemicalStimulus(cell.stim,k)*cell.sensitivity;
+  if(strength<cell.threshold)continue;
+  const pulse=cell.amount*clamp(strength,0,2),ch=cell.channel;
+  if(!active.includes(ch))continue;
+  // Glands pay *real metabolic energy* for secreting anything, including
+  // imaginary reward. Persistent levels adapt, and only phasic release teaches.
+  const energyCost=.015+.043*pulse;
+  if(cre.energy<=energyCost+.5)continue;
+  cre.energy-=energyCost;cre.chemicalSpent+=energyCost;chemicalExpense+=energyCost;
+  cre.chemistry[ch]=Math.min(7,cre.chemistry[ch]+pulse);
+  cre.windowPulse[ch]+=pulse;
+  burstReward+=cre.chemValence[ch]*pulse;
+  cre.cellCooldown[index]=cell.refractory;
+  cre.cellFlashes.push(index);
+ }
+ for(const ch of active)metaSum+=cre.chemMeta[ch]*Math.min(2,cre.chemistry[ch])*.38;
+ cre.plasticity=clamp(1+metaSum,.2,2.6);
+ // Chemical reward is an innovation/pulse, not absolute concentration.
+ // A gland releasing high chemical levels continuously pays energy but gains
+ // no special physiological benefit and no constant reward each tick.
+ cre.rewardAcc+=8*tanh(burstReward);
+}
+function adaptReceptors(cre){
+ const ng=cre.genome.neurochem;
+ // Outcome-grounded, local receptor calibration. Survival itself is not a
+ // score that can be hacked: only observed nourishment, energy retention and
+ // actual offspring are used to calibrate *predictions* about ligand utility.
+ // Selection later operates on actual survival and reproduction as before.
+ const outcome=clamp((cre.energy-cre.windowEnergy)/35 + .10*cre.windowFood +
+                     .9*cre.windowBirths - .009*cre.oceanTicks,-1.5,1.5);
+ const predictionError=clamp(outcome-cre.outcomeEMA,-2,2);
+ cre.outcomeEMA=cre.outcomeEMA*.91+outcome*.09;
+ for(const ch of ng.active){
+  const p=cre.windowPulse[ch];if(p>.001){
+   const old=cre.chemValence[ch];
+   cre.chemValence[ch]=clamp(old+ng.rewardPlasticity*cre.plasticity*predictionError*
+                                clamp(p,0,3)/3,-2.4,2.4);
+   cre.receptorDrift+=Math.abs(cre.chemValence[ch]-old);
+   // Meta-receptors can learn to raise or suppress plasticity when their
+   // presence predicts successful vs harmful experiments.
+   cre.chemMeta[ch]=clamp(cre.chemMeta[ch]+ng.metaPlasticity*predictionError*
+                                 clamp(p,0,3)/3,-1.25,1.25);
+   learnedReceptors++;
+  }
+  cre.windowPulse[ch]=0;
+ }
+ cre.windowEnergy=cre.energy;cre.windowFood=0;cre.windowBirths=0;cre.oceanTicks=0;
+}
 function stepCreature(cre){
  const bredFlag=cre.bredThisTick;cre.bredThisTick=false;cre.ateThisTick=false;
  const preE=cre.energy,c=cre.center||centroid(cre),N=cre.cur.length,g=cre.genome;
+ const phys=cre.phys||(cre.phys=cellPhysiology(g));
  const t=terrainAt(c.x,c.y),loc=localWeather(t),r=richness(c.x,c.y),h=loc.stress/1.6;
- const nf=findNearestFood(cre,SENSOR_RANGE),foodDistBefore=nf?nf.d:null;
- const ncR=findNearestCreature(cre,SENSOR_RANGE),nc=ncR?ncR.p:null,ncDist=ncR?ncR.d:9999;
+ const foodSenseR=SENSOR_RANGE*clamp(1+.22*(phys.lightSensor-1),.4,1.8);
+ const touchR=SENSOR_RANGE*clamp(1+.17*(cellCount(g,'touchSensor')-1),.4,1.8);
+ const nf=findNearestFood(cre,foodSenseR),foodDistBefore=nf?nf.d:null;
+ const ncR=findNearestCreature(cre,touchR),nc=ncR?ncR.p:null,ncDist=ncR?ncR.d:9999;
  const tagSim=nc?1-clamp(Math.hypot(...g.tag.map((v,i)=>v-nc.genome.tag[i]))/2,0,1):0;
  const phase=cre.age*(g.rhythm??.14);
  // Last five sensor channels expose moisture, temperature, water contact and a rhythmic clock.
@@ -508,7 +708,9 @@ function stepCreature(cre){
  cre.sensors=[cre.energy/START_E,cre.age/g.maxAge,r,h,
   nf?clamp((nf.p.x-c.x)/SENSOR_RANGE,-1,1):0,nf?clamp((nf.p.y-c.y)/SENSOR_RANGE,-1,1):0,
   nc?clamp((centroid(nc).x-c.x)/SENSOR_RANGE,-1,1):0,nc?clamp((centroid(nc).y-c.y)/SENSOR_RANGE,-1,1):0,
-  tagSim,1,loc.moist,loc.temp,t.water?1:0,Math.sin(phase),Math.cos(phase)];
+  tagSim,1,loc.moist,loc.temp,t.water?1:0,Math.sin(phase),Math.cos(phase),
+  ...Array.from(cre.chemistry,(v,i)=>v/(v+.75)*g.neurochem.gain[i]*
+   (phys.chemicalSensor>0?Math.min(1.5,.5+.3*phys.chemicalSensor):.3))];
  const motor=forwardBrain(cre);
  let spd=0;
  for(let i=0;i<N;i++){
@@ -539,12 +741,24 @@ function stepCreature(cre){
  let inWater=0;
  for(const p of cre.cur){
   p.x=clamp(p.x,10,WORLD_W-10);p.y=clamp(p.y,10,WORLD_H-10);
-  const pt=terrainAt(p.x,p.y);if(pt.water)inWater++;
+  let pt=terrainAt(p.x,p.y);
+  if(pt.blocked){ // Physical cliff collision at an irregular geographic rim.
+   const old=cre.old[cre.cur.indexOf(p)];
+   if(old&&!terrainAt(old.x,old.y).blocked){p.x=old.x;p.y=old.y;}
+   else {p.x+=(WORLD_W/2-p.x)*.035;p.y+=(WORLD_H/2-p.y)*.035;}
+   pt=terrainAt(p.x,p.y);
+  }
+  if(pt.water)inWater++;
+  if(pt.ocean){ // Cold offshore exposure and persistent current make sea crossing unviable.
+   cre.energy-=.28;cre.tissue-=.16;cre.oceanTicks++;oceanExposures++;
+   p.x+=(WORLD_W/2-p.x)*.002;p.y+=(WORLD_H/2-p.y)*.002;
+  }
   // Sparse hard obstacles. Terrain and water costs apply to all animals equally.
   for(const rock of rocks){let dx=p.x-rock.x,dy=p.y-rock.y;
    if(Math.abs(dx)>rock.r+5||Math.abs(dy)>rock.r+5)continue;
    let d=Math.hypot(dx,dy),minD=rock.r+2;
-   if(d<minD){d=Math.max(d,.001);p.x=clamp(rock.x+dx/d*minD,10,WORLD_W-10);p.y=clamp(rock.y+dy/d*minD,10,WORLD_H-10);}
+   if(d<minD){d=Math.max(d,.001);p.x=clamp(rock.x+dx/d*minD,10,WORLD_W-10);p.y=clamp(rock.y+dy/d*minD,10,WORLD_H-10);
+    cre.tissue-=.00035;}
   }
  }
  const after=centroid(cre),moved=Math.hypot(after.x-c.x,after.y-c.y);cre.center=after;
@@ -557,33 +771,41 @@ cre.moveDistance+=moved;cre.lastX=after.x;cre.lastY=after.y;
   const base=cre.trail[0];cre.travel250=Math.hypot(after.x-base.x,after.y-base.y);
  }
  const cell=Math.floor(after.x/28)+','+Math.floor(after.y/28);
- if(!cre.visitedCells.has(cell)){cre.visitedCells.add(cell);cre.newCellsWindow++;}
+ let newCell=false;
+ if(!cre.visitedCells.has(cell)){cre.visitedCells.add(cell);cre.newCellsWindow++;newCell=true;}
  const terrainCost=.17*inWater/N+.13*t.slope+.11*Math.max(0,t.elevation-.72);
- const metab=BASE_METAB*N*g.scale*(.58+.77*h+terrainCost);
- cre.energy-=metab+MUSCLE_COST*cost*g.scale;
+ const thermalProtect=clamp(1-.045*phys.insulation,.65,1);
+ const metab=BASE_METAB*N*g.scale*(.58+.77*h*thermalProtect+terrainCost)+
+             .00018*g.cells.length;
+ cre.energy-=metab+MUSCLE_COST*cost*g.scale*clamp(1.18-.15*phys.motorCell,.54,1.3);
+ // Repair cells maintain physical integrity against harsh climates and
+ // repeated impacts; producing/maintaining this protection uses energy.
+ cre.tissue=Math.max(0,cre.tissue-Math.max(0,loc.stress-1.05)*.014);
+ if(cre.tissue<100&&cre.energy>45&&phys.repair){
+  const restored=Math.min(100-cre.tissue,phys.repair*.008);
+  cre.tissue+=restored;cre.energy-=restored*.12;
+ }
  // One discrete feeding event per tick prevents unrealistic multiple instant meals.
  if(cre.energy<START_E){
   for(const f of nearbyFood(after.x,after.y,EAT_RADIUS)){
    if(Math.abs(f.x-after.x)>EAT_RADIUS||Math.abs(f.y-after.y)>EAT_RADIUS)continue;
    if(Math.hypot(f.x-after.x,f.y-after.y)<EAT_RADIUS){
-    cre.energy=Math.min(START_E,cre.energy+FOOD_TYPES[f.type].energy);
-    f.e=0;f.t=0;cre.ateThisTick=true;cre.foodEaten++;foodEaten++;break;
+    cre.energy=Math.min(cre.maxEnergy,cre.energy+FOOD_TYPES[f.type].energy*(.84+.08*phys.gut));
+    f.e=0;f.t=0;cre.ateThisTick=true;cre.foodEaten++;cre.windowFood++;foodEaten++;break;
    }
   }
  }
- const chans=[cre.ateThisTick?1:0,bredFlag?1:0,clamp((cre.energy-preE)/5,-1,1),ncDist<40?1:0,
-  nc?0:1,clamp(spd/3,0,1),cre.age/g.maxAge,tagSim,cre.energy/START_E,1];
- let rsum=0;for(let i=0;i<10;i++)rsum+=g.reward.w[i]*chans[i];
- let assist=0;
+ // Cells emit neutral ligands. It is the individual brain's evolvable,
+ // lifetime-learned receptors that interpret them as reward, penalty or meta.
+ updateChemistry(cre,{fed:cre.ateThisTick,bred:bredFlag,energyDrop:Math.max(0,preE-cre.energy),
+    energy:cre.energy,newCell,nearFood:!!nf&&nf.d<65,heat:loc.temp,wet:inWater>0,
+    nearMate:ncDist<40,rhythm:Math.sin(phase)});
+ // The founder scaffold rewards *real progress* early on. It cannot make
+ // internal chemicals intrinsically good or permanently force food preference.
  if(nf&&nf.p.e===1&&foodDistBefore!==null){
   const foodDistAfter=Math.hypot(nf.p.x-after.x,nf.p.y-after.y);
-  // This is credit for actual progress; it cannot manufacture food or energy.
-  assist=founderStrength()*2.1*clamp(g.reward.w[0],-2,2)*clamp(foodDistBefore-foodDistAfter,-1,1);
+  cre.rewardAcc+=founderStrength()*1.6*clamp(foodDistBefore-foodDistAfter,-1,1);
  }
- // Add unclipped, gene-dependent credit when an intrinsically valued sparse
- // event occurs (the tanh score alone almost erases the feeding signal).
- const eventCredit=(cre.ateThisTick?3.5*g.reward.w[0]:0)+(bredFlag?3.5*g.reward.w[1]:0);
- cre.rewardAcc+=tanh(rsum)+eventCredit+assist;
  cre.learnClock++;
  const L=g.learn||{interval:45,sigma:.2,edits:2},every=Math.max(1,Math.round(L.interval));
  if(cre.learnClock%every===0){
@@ -595,6 +817,7 @@ cre.moveDistance+=moved;cre.lastX=after.x;cre.lastY=after.y;
   const fs=founderStrength();
   const motionCredit=fs*(every*.25*moving+2.5*Math.min(3,cre.newCellsWindow));
   const score=cre.rewardAcc+motionCredit;
+  adaptReceptors(cre);
   if(cre.trying){
    if(score>cre.baselineScore+0.05){
     cre.keptW=cre.effW.slice();cre.accepted++;acceptedTrials++;
@@ -610,9 +833,18 @@ cre.moveDistance+=moved;cre.lastX=after.x;cre.lastY=after.y;
   cre.rewardAcc=0;cre.newCellsWindow=0;cre.windowStart={x:after.x,y:after.y};
  }
  cre.age++;if(cre.cooldown>0)cre.cooldown--;
- const hazard=LUCK_HAZARD+SENESCENCE_K*Math.pow(cre.age/g.maxAge,3);
- if(cre.energy<=0||cre.age>g.maxAge||Math.random()<hazard){
-  cre.alive=false;deaths++;if(cre.energy<=0)starvationDeaths++;else if(cre.age>g.maxAge)ageDeaths++;else hazardDeaths++;
+ // Death by senescence is now tens of thousands of ticks away. A soft late
+ // mortality curve replaces abrupt death immediately at the genetic lifespan.
+ const over=Math.max(0,(cre.age-g.maxAge)/Math.max(1,g.maxAge));
+ const hazard=LUCK_HAZARD+SENESCENCE_K*Math.pow(cre.age/g.maxAge,5)+
+              (over>0?.000008*Math.pow(over,2):0);
+ const roll=Math.random();
+ if(cre.energy<=0||cre.tissue<=0||cre.age>g.maxAge*2.3||roll<hazard){
+  cre.alive=false;deaths++;
+  if(cre.energy<=0)starvationDeaths++;
+  else if(cre.tissue<=0)hazardDeaths++;
+  else if(cre.age>g.maxAge*2.3 || (cre.age>g.maxAge&&roll>=LUCK_HAZARD))ageDeaths++;
+  else hazardDeaths++;
  }
 }
 function tryBreed(){
@@ -638,7 +870,7 @@ function tryBreed(){
       A.energy-=costA; B.energy-=costB; A.cooldown=MATE_COOLDOWN; B.cooldown=MATE_COOLDOWN; A.bredThisTick=true; B.bredThisTick=true;
       const child=mutate(cross(A.genome,B.genome)); child.generation=Math.max(A.genome.generation||0,B.genome.generation||0)+1;
       const spot={x:(cA.x+cB.x)/2+rnd(-10,10), y:(cA.y+cB.y)/2+rnd(-10,10)};
-      spawn(child,spot.x,spot.y);creatures[creatures.length-1].energy=CHILD_START_E;A.offspring++;B.offspring++;
+      spawn(child,spot.x,spot.y);creatures[creatures.length-1].energy=CHILD_START_E;A.offspring++;B.offspring++;A.windowBirths++;B.windowBirths++;
       births++; if(births<=8||births%20===0)addLog(`Tick ${ticks} · Birth ${births} (generation ${child.generation}).`);
     }
   }
@@ -778,7 +1010,15 @@ function drawWorld(){
   ctx.lineWidth=selected?2.7:1.65;
   for(const sp of c.genome.springs){const A=c.cur[sp.a],B=c.cur[sp.b];if(!A||!B)continue;
    ctx.beginPath();ctx.moveTo(A.x*s,A.y*s);ctx.lineTo(B.x*s,B.y*s);ctx.stroke();}
-  for(const p of c.cur){ctx.beginPath();ctx.arc(p.x*s,p.y*s,Math.max(1.8,3*c.genome.scale*s),0,Math.PI*2);ctx.fill();}
+  for(let j=0;j<c.cur.length;j++){
+   const p=c.cur[j];ctx.beginPath();ctx.arc(p.x*s,p.y*s,Math.max(1.8,3*c.genome.scale*s),0,Math.PI*2);ctx.fill();
+   const roles=c.genome.cells.filter(cell=>cell.anchor===j);
+   if(roles.length){const cell=roles[(Math.floor(c.age/60))%roles.length];
+    ctx.fillStyle=CELL_COLORS[cell.kind]||'#ffffff';ctx.beginPath();
+    ctx.arc(p.x*s,p.y*s,Math.max(1.1,1.4*c.genome.scale*s),0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=`hsl(${c.genome.hue},73%,60%)`;
+   }
+  }
   if(selected){const p=centroid(c);ctx.strokeStyle='#fff';ctx.lineWidth=1.1;
    ctx.beginPath();ctx.arc(p.x*s,p.y*s,Math.max(9,15*s),0,Math.PI*2);ctx.stroke();}
  }
@@ -801,7 +1041,7 @@ function showInspector(){
  if(!c){el('inspector').textContent=selectedId===null?'Click a coloured creature in the world to inspect its genome, learning record and habitat.':'That creature has died. Select another.';return;}
  const p=centroid(c),t=terrainAt(p.x,p.y),L=c.genome.learn;
  el('inspector').innerHTML=`<b style="color:var(--accent)">Creature #${c.id}</b> · generation ${c.genome.generation||0}<br>
- Habitat: ${BIOMES[t.biome].name}<br>Energy: ${fmt(c.energy)} / 100 · age: ${c.age} / ${Math.round(c.genome.maxAge)}<br>
+ Habitat: ${BIOMES[t.biome].name}<br>Energy: ${fmt(c.energy)} / ${c.maxEnergy} · tissue: ${fmt(c.tissue)} / 100 · age: ${c.age} / ${Math.round(c.genome.maxAge)}<br>
  Body: ${c.cur.length} nodes, ${c.genome.springs.length} springs<br>
  Brain: ${c.genome.brain.hidden.length} hidden neurons, ${c.genome.brain.conn.length} connections<br>
  Learning: every ${L.interval} ticks, σ=${fmt(L.sigma)}, ${L.edits} edits<br>
@@ -809,7 +1049,13 @@ function showInspector(){
  Food eaten: ${c.foodEaten} · offspring: ${c.offspring}<br>
  Distance travelled: ${Math.round(c.moveDistance)} units · displacement in last 250 ticks: ${fmt(c.travel250)}<br>
  Explored ${c.visitedCells.size} cells · lifetime range: ${fmt(c.maxRange)} units<br>
- Food reward: ${fmt(c.genome.reward.w[0])} · mating reward: ${fmt(c.genome.reward.w[1])}`;
+ Body cells: ${c.genome.cells.length}, including ${c.phys?.glands.length||0} signalling glands<br>
+ Ligands: ${c.genome.neurochem.active.map(i=>CHEM_LABELS[i]).join(', ')}<br>
+ Receptors (valence): ${c.genome.neurochem.active.map(i=>CHEM_LABELS[i]+':'+fmt(c.chemValence[i])).join(' · ')}<br>
+ Learned meta-receptors: ${c.genome.neurochem.active.map(i=>CHEM_LABELS[i]+':'+fmt(c.chemMeta[i])).join(' · ')}<br>
+ Active ligand levels: ${c.genome.neurochem.active.map(i=>CHEM_LABELS[i]+':'+fmt(c.chemistry[i])).join(' · ')}<br>
+ Learning-rate multiplier: ${fmt(c.plasticity)} · signalling energy spent: ${fmt(c.chemicalSpent)}<br>
+ Cell types: ${[...new Set(c.genome.cells.map(cell=>cell.kind))].join(', ')}`;
 }
 function updateUI(){
  const n=creatures.length,fs=founderStrength(),av=(fun)=>n?creatures.reduce((sum,c)=>sum+fun(c),0)/n:0;
@@ -833,10 +1079,20 @@ function updateUI(){
  el('mInterval').textContent=fmt(av(c=>c.genome.learn.interval))+' ticks';
  el('mSigma').textContent=av(c=>c.genome.learn.sigma).toFixed(3);
  el('mBrain').textContent=fmt(av(c=>c.genome.brain.conn.length));
- el('mRewards').textContent=fmt(av(c=>c.genome.reward.w[0]))+' / '+fmt(av(c=>c.genome.reward.w[1]));
+ el('mRewards').textContent=fmt(av(c=>c.chemValence[0]))+' / '+fmt(av(c=>c.chemValence[2]));
  el('mTravel').textContent=fmt(av(c=>c.travel250))+' units';
  el('mExplorers').textContent=creatures.filter(c=>c.travel250>15).length+' / '+n;
  el('mRange').textContent=fmt(av(c=>c.maxRange))+' units';
+ el('chemStatus').textContent=(n?Math.max(...creatures.map(c=>c.genome.neurochem.active.length)):0)+' / '+CHEM_COUNT;
+ el('mCells').textContent=fmt(av(c=>c.genome.cells.length))+' / '+fmt(av(c=>c.phys?.glands.length||0));
+ el('mChemTypes').textContent=fmt(av(c=>c.genome.neurochem.active.length))+' / '+CHEM_COUNT;
+ el('mNewSignals').textContent=novelSignalBirths.toLocaleString();
+ el('mChemLevel').textContent=fmt(av(c=>c.genome.neurochem.active.reduce((sum,i)=>sum+c.chemistry[i],0)));
+ el('mPlastic').textContent=fmt(av(c=>c.plasticity))+'×';
+ el('mChemLearning').textContent=learnedReceptors.toLocaleString();
+ el('mDrift').textContent=fmt(av(c=>c.receptorDrift));
+ el('mChemCost').textContent=fmt(chemicalExpense);
+ el('mOcean').textContent=oceanExposures.toLocaleString();
  el('mClimate').textContent=weather().season+' / '+Math.round(weather().rain*100)+'%';
  el('mSupply').textContent=food+' / '+foodSiteCount();
  el('mSoil').textContent=Math.round(worldMeanSoil*100)+'%';
@@ -891,10 +1147,10 @@ cv.addEventListener('pointerup',e=>{if(!drag)return;
  drag=null;});
 cv.addEventListener('wheel',e=>{e.preventDefault();autoFollow=false;
  const r=cv.getBoundingClientRect(),px=e.clientX-r.left,py=e.clientY-r.top,at=screenToWorld(px,py);
- camScale=clamp(camScale*(e.deltaY>0?.86:1.16),.55,7);
+ camScale=clamp(camScale*(e.deltaY>0?.86:1.16),.6,16);
  const aft=screenToWorld(px,py);camX+=at.x-aft.x;camY+=at.y-aft.y;
 },{passive:false});
-el('homeCam').onclick=()=>{autoFollow=true;camScale=1.2;};
+el('homeCam').onclick=()=>{autoFollow=true;camScale=3.55;};
 el('mapLayer').onchange=()=>{bakedLayer='';rebuildMapLayer();};
 el('founderLength').oninput=e=>{founderEnd=Number(e.target.value);el('founderEndLabel').textContent=founderEnd.toLocaleString();};
 el('immigrationBtn').onclick=e=>{immigration=!immigration;e.target.classList.toggle('on',immigration);e.target.textContent='Immigration: '+(immigration?'on':'off');};
