@@ -1,0 +1,412 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Open Ecosystem</title>
+<style>
+:root{
+  --bg:#0c1210; --panel:#15201a; --line:#2a3a30; --text:#e7ede7; --dim:#8fa091; --accent:#7fe07a; --warn:#e0824a;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]){ --bg:#f4f6f2; --panel:#fff; --line:#d8ded4; --text:#1b241c; --dim:#5c6b5d; --accent:#2f8f3a; --warn:#a15a20; } }
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:ui-monospace,Menlo,Consolas,monospace;height:100%}
+body{display:flex;flex-direction:column;min-height:100%}
+header{padding:12px 16px 6px;flex-shrink:0}
+h1{font-size:16px;margin:0 0 4px;font-weight:600}
+p.sub{margin:0;color:var(--dim);font-size:12px;line-height:1.5;max-width:76ch}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 16px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);flex-shrink:0}
+button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+button.on{background:var(--accent);color:#08120a;border-color:var(--accent)}
+.stat{font-size:12px;color:var(--dim)}
+.stat b{color:var(--text);font-weight:600}
+#wrap{flex:1;min-height:0;position:relative;overflow:hidden}
+canvas{display:block;width:100%;height:100%}
+footer{padding:7px 16px;font-size:11px;color:var(--dim);border-top:1px solid var(--line);line-height:1.5;flex-shrink:0}
+footer b{color:var(--warn)}
+</style>
+</head>
+<body>
+<header>
+<h1>Open Ecosystem</h1>
+<p class="sub">Continuous world, no generations. Each creature also carries its own evolving sense of what feels rewarding — it starts out liking food and mating, but that can drift into anything — and quietly practices against that feeling throughout its life.</p>
+</header>
+<div class="bar">
+  <button id="playBtn">▶ Run</button>
+  <button id="resetBtn">↺ New world</button>
+  <button id="s1" class="on">1×</button><button id="s4">4×</button><button id="s8">8×</button>
+  <button id="turboBtn">⚡ Turbo</button>
+  <span class="stat">GPU <b id="gpustat">checking…</b></span>
+  <span class="stat">Ticks <b id="ticks">0</b></span>
+  <span class="stat">Pop <b id="pop">0</b></span>
+  <span class="stat">Births <b id="births">0</b></span>
+  <span class="stat">Avg age <b id="avgage">0</b></span>
+</div>
+<div id="wrap"><canvas id="c"></canvas></div>
+<footer><b>Reward gene:</b> a mutable weight per sensation (fed, bred, energy rising, crowded, alone, moving, aging...) starts pointed at food+mating and can drift anywhere. <b>Lifetime learning:</b> every ~45 ticks a creature nudges its own motor wiring and keeps it only if its own reward score rose — not inherited, only the capacity to do it is. <b>Turbo:</b> decouples simulation from frame rate and raises the population cap; WebGPU offloads the nearest-food/nearest-neighbor search to a compute shader when your browser supports it, falling back to plain JS otherwise.</footer>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+function fitCanvas(){const w=document.getElementById('wrap');cv.width=w.clientWidth*devicePixelRatio;cv.height=w.clientHeight*devicePixelRatio;cv.style.width=w.clientWidth+'px';cv.style.height=w.clientHeight+'px';ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);}
+addEventListener('resize',fitCanvas);
+function rnd(a,b){return a+Math.random()*(b-a)}
+function gauss(){let u=1-Math.random(),v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function tanh(x){return Math.tanh(x)}
+
+// ---- fixed biology ----
+const WORLD_W=2400, WORLD_H=1400;
+const CONNECT_R=34, STIFF=0.26, ITERS=3, DRAG=0.985, DRAGQ=0.006, MAXPULL=0.4;
+const BASE_METAB=0.006, MUSCLE_COST=0.012, EAT_RADIUS=16, SENSOR_RANGE=200;
+const REPRO_ENERGY_MIN=65, REPRO_BASE=18, REPRO_PER_NODE=2.6, CHILD_START_E=48, MATE_RANGE=34, MATE_COOLDOWN=260, MATE_SCORE_T=0.62, COMPAT_T=0.85;
+const SENESCENCE_K=0.0000035, LUCK_HAZARD=0.00003, POP_CAP=60, TURBO_POP_CAP=140, START_E=100;
+const MAXH=12, MAXCONN=50, LEARN_EVERY=45;
+function popCap(){return turbo?TURBO_POP_CAP:POP_CAP;}
+
+// ---- biome field ----
+let seed={a:rnd(0,10),b:rnd(0,10),c:rnd(0,10),d:rnd(0,10)};
+function richness(x,y){return clamp(0.5+0.5*Math.sin(x*0.0010+seed.a)*Math.cos(y*0.0012-seed.b),0,1)}
+function harshness(x,y){return clamp(0.5+0.5*Math.sin(x*0.0014-seed.c)*Math.cos(y*0.0009+seed.d),0,1)}
+let biomeTex=document.createElement('canvas'); biomeTex.width=240; biomeTex.height=140;
+function bakeBiome(){
+  seed={a:rnd(0,10),b:rnd(0,10),c:rnd(0,10),d:rnd(0,10)};
+  const bctx=biomeTex.getContext('2d'), img=bctx.createImageData(240,140);
+  for(let py=0;py<140;py++)for(let px=0;px<240;px++){
+    const wx=px/240*WORLD_W, wy=py/140*WORLD_H;
+    const r=richness(wx,wy), h=harshness(wx,wy);
+    const g=90+r*110, rr=60+h*90-r*30, b=60+(1-h)*40+r*20;
+    const i=(py*240+px)*4; img.data[i]=rr; img.data[i+1]=g; img.data[i+2]=b; img.data[i+3]=255;
+  }
+  bctx.putImageData(img,0,0);
+}
+
+// ---- food ----
+let foods=[];
+function seedFood(){ foods=[]; for(let i=0;i<220;i++){const x=rnd(0,WORLD_W),y=rnd(0,WORLD_H); foods.push({x,y,e:richness(x,y)>0.35?1:0,t:0});} }
+function stepFood(){ for(const f of foods){ if(f.e===0){ f.t++; const need=140+(1-richness(f.x,f.y))*400; if(f.t>need)f.e=1; } } }
+
+// ---- genome ----
+let sidCounter=1;
+function newBody(){
+  const n=Math.floor(rnd(4,7)); const nodes=[]; for(let i=0;i<n;i++)nodes.push({x:rnd(-20,20),y:rnd(-20,20)});
+  const springs=[];
+  for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){
+    const dx=nodes[i].x-nodes[j].x, dy=nodes[i].y-nodes[j].y;
+    if(Math.hypot(dx,dy)<CONNECT_R) springs.push({id:sidCounter++, a:i,b:j, len:Math.hypot(dx,dy), muscle:Math.random()<0.6?1:0, amp:rnd(0.4,1)});
+  }
+  ensureConnected(nodes,springs);
+  return {nodes,springs};
+}
+function ensureConnected(nodes,springs){
+  for(let i=0;i<nodes.length;i++){
+    if(!springs.some(s=>s.a===i||s.b===i)){
+      let best=-1,bd=1e9; for(let j=0;j<nodes.length;j++){if(j===i)continue; const d=Math.hypot(nodes[i].x-nodes[j].x,nodes[i].y-nodes[j].y); if(d<bd){bd=d;best=j;}}
+      if(best>=0) springs.push({id:sidCounter++,a:i,b:best,len:bd,muscle:1,amp:rnd(0.4,1)});
+    }
+  }
+}
+function newGenome(){
+  const {nodes,springs}=newBody();
+  const rw=[1,1,0,0,0,0,0,0,0,0].map(v=>v+rnd(-0.05,0.05));
+  return {
+    nodes,springs,
+    scale:rnd(0.8,1.2), hue:rnd(0,360),
+    tag:[rnd(-1,1),rnd(-1,1),rnd(-1,1)],
+    pref:{size:rnd(0.7,1.4),hue:rnd(0,360),tagW:rnd(0,1)},
+    maxAge:rnd(1800,4200),
+    reward:{w:rw},
+    brain:{hidden:[], nextH:0, conn:emptyConn(springs)}
+  };
+}
+function emptyConn(springs){ const conn=[]; for(const s of springs){ if(s.muscle){ conn.push({from:'s'+Math.floor(rnd(0,10)), to:'m'+s.id, w:rnd(-1,1)}); } } return conn; }
+function cloneG(g){return JSON.parse(JSON.stringify(g));}
+function pruneConn(g){
+  const validTo=new Set(g.brain.hidden.map(h=>'h'+h).concat(g.springs.filter(s=>s.muscle).map(s=>'m'+s.id)));
+  const validFrom=new Set(['s0','s1','s2','s3','s4','s5','s6','s7','s8','s9'].concat([...validTo]));
+  g.brain.conn=g.brain.conn.filter(c=>validTo.has(c.to)&&validFrom.has(c.from));
+}
+function mutateBody(g){
+  const R=0.15;
+  g.nodes=g.nodes.map(n=>({x:n.x+(Math.random()<R?gauss()*5:0), y:n.y+(Math.random()<R?gauss()*5:0)}));
+  g.springs=g.springs.map(s=>({...s, len:Math.max(6,s.len+(Math.random()<R?gauss()*3:0)), amp:clamp(s.amp+(Math.random()<R?gauss()*0.15:0),0.1,1), muscle:Math.random()<0.03?1-s.muscle:s.muscle}));
+  if(Math.random()<0.12 && g.nodes.length<9){
+    const base=Math.floor(rnd(0,g.nodes.length));
+    const nn={x:g.nodes[base].x+rnd(-16,16), y:g.nodes[base].y+rnd(-16,16)};
+    g.nodes.push(nn); const idx=g.nodes.length-1;
+    g.springs.push({id:sidCounter++, a:base,b:idx, len:16, muscle:Math.random()<0.6?1:0, amp:rnd(0.4,1)});
+    for(let j=0;j<g.nodes.length-1;j++){ if(j===base)continue; if(Math.hypot(nn.x-g.nodes[j].x,nn.y-g.nodes[j].y)<CONNECT_R && Math.random()<0.4) g.springs.push({id:sidCounter++,a:j,b:idx,len:Math.hypot(nn.x-g.nodes[j].x,nn.y-g.nodes[j].y),muscle:Math.random()<0.5?1:0,amp:rnd(0.4,1)}); }
+  }
+  if(Math.random()<0.08 && g.nodes.length>3){
+    const rem=Math.floor(rnd(0,g.nodes.length));
+    g.nodes.splice(rem,1);
+    g.springs=g.springs.filter(s=>s.a!==rem&&s.b!==rem).map(s=>({...s, a:s.a>rem?s.a-1:s.a, b:s.b>rem?s.b-1:s.b}));
+    ensureConnected(g.nodes,g.springs);
+  }
+  g.scale=clamp(g.scale+(Math.random()<R?gauss()*0.1:0),0.5,1.8);
+  g.hue=(g.hue+(Math.random()<R?gauss()*20:0)+360)%360;
+  g.tag=g.tag.map(t=>clamp(t+(Math.random()<0.1?gauss()*0.15:0),-1.5,1.5));
+  g.pref.size=clamp(g.pref.size+(Math.random()<R?gauss()*0.15:0),0.4,2);
+  g.pref.hue=(g.pref.hue+(Math.random()<R?gauss()*25:0)+360)%360;
+  g.pref.tagW=clamp(g.pref.tagW+(Math.random()<R?gauss()*0.2:0),0,1);
+  g.maxAge=clamp(g.maxAge+(Math.random()<R?gauss()*150:0),1200,5200);
+}
+function mutateReward(g){
+  g.reward.w=g.reward.w.map(v=>clamp(v+(Math.random()<0.12?gauss()*0.35:0),-2,2));
+  if(Math.random()<0.05){ const i=Math.floor(rnd(0,10)); g.reward.w[i]=rnd(-1.5,1.5); }
+}
+function mutateBrain(g){
+  const b=g.brain;
+  if(Math.random()<0.15 && b.hidden.length<MAXH){ const id=b.nextH++; b.hidden.push(id); b.conn.push({from:'s'+Math.floor(rnd(0,10)),to:'h'+id,w:rnd(-1,1)}); const targets=g.springs.filter(s=>s.muscle); if(targets.length) b.conn.push({from:'h'+id,to:'m'+targets[Math.floor(rnd(0,targets.length))].id,w:rnd(-1,1)}); }
+  if(Math.random()<0.1 && b.hidden.length>0){ b.hidden.splice(Math.floor(rnd(0,b.hidden.length)),1); }
+  if(Math.random()<0.2 && b.conn.length<MAXCONN){
+    const pool=['s0','s1','s2','s3','s4','s5','s6','s7','s8','s9'].concat(b.hidden.map(h=>'h'+h));
+    const targets=b.hidden.map(h=>'h'+h).concat(g.springs.filter(s=>s.muscle).map(s=>'m'+s.id));
+    if(pool.length&&targets.length) b.conn.push({from:pool[Math.floor(rnd(0,pool.length))], to:targets[Math.floor(rnd(0,targets.length))], w:rnd(-1,1)});
+  }
+  if(Math.random()<0.15 && b.conn.length>0) b.conn.splice(Math.floor(rnd(0,b.conn.length)),1);
+  b.conn=b.conn.map(c=>({...c, w:c.w+(Math.random()<0.2?gauss()*0.3:0)}));
+  pruneConn(g);
+}
+function mutate(g){ const m=cloneG(g); mutateBody(m); mutateBrain(m); mutateReward(m); return m; }
+function cross(a,b){
+  const c=cloneG(Math.random()<0.5?a:b);
+  c.scale=Math.random()<0.5?a.scale:b.scale; c.hue=Math.random()<0.5?a.hue:b.hue;
+  c.tag=c.tag.map((_,i)=>Math.random()<0.5?a.tag[i]:b.tag[i]);
+  c.pref={size:Math.random()<0.5?a.pref.size:b.pref.size, hue:Math.random()<0.5?a.pref.hue:b.pref.hue, tagW:Math.random()<0.5?a.pref.tagW:b.pref.tagW};
+  c.maxAge=Math.random()<0.5?a.maxAge:b.maxAge;
+  c.reward={w:a.reward.w.map((v,i)=>Math.random()<0.5?v:b.reward.w[i])};
+  pruneConn(c);
+  return c;
+}
+
+function forwardBrain(cre){
+  const g=cre.genome, prev=cre.neur, conn=g.brain.conn, S=cre.sensors;
+  const val=(id)=>{ if(id[0]==='s')return S[+id.slice(1)]; return prev[id]||0; };
+  const next={};
+  for(const h of g.brain.hidden){ const id='h'+h; let sum=0; for(let k=0;k<conn.length;k++) if(conn[k].to===id) sum+=cre.effW[k]*val(conn[k].from); next[id]=tanh(sum); }
+  const motorOut={};
+  for(const s of g.springs){ if(!s.muscle)continue; const id='m'+s.id; let sum=0; for(let k=0;k<conn.length;k++) if(conn[k].to===id) sum+=cre.effW[k]*val(conn[k].from); next[id]=tanh(sum); motorOut[s.id]=next[id]; }
+  cre.neur=next;
+  return motorOut;
+}
+
+let creatures=[], ticks=0, births=0, deaths=0, cid=1, turbo=false;
+function spawn(genome,x,y){
+  const cur=genome.nodes.map(n=>({x:x+n.x*genome.scale,y:y+n.y*genome.scale}));
+  const effW=genome.brain.conn.map(c=>c.w);
+  creatures.push({id:cid++, genome, cur, old:cur.map(p=>({...p})), energy:START_E, age:0, cooldown:0, neur:{}, alive:true,
+    effW, keptW:effW.slice(), rewardAcc:0, prevWindow:0, learnClock:0, trying:false, ateThisTick:false, bredThisTick:false});
+}
+function seedPopulation(){ creatures=[]; for(let i=0;i<26;i++) spawn(newGenome(), rnd(200,WORLD_W-200), rnd(200,WORLD_H-200)); }
+function resetWorld(){ ticks=0; births=0; deaths=0; nearCache=null; bakeBiome(); seedFood(); seedPopulation(); }
+
+function centroid(cre){ let x=0,y=0; for(const p of cre.cur){x+=p.x;y+=p.y} return {x:x/cre.cur.length,y:y/cre.cur.length}; }
+function findNearestFood(cre,maxR){
+  if(turbo&&gpuOK&&nearCache&&nearCache.has(cre.id)){ const e=nearCache.get(cre.id); if(e.fo&&e.fo.e===1&&e.fd<=maxR) return {p:e.fo,d:e.fd}; return null; }
+  const c=centroid(cre); let best=null,bd=maxR;
+  for(const f of foods){ if(f.e!==1)continue; const d=Math.hypot(f.x-c.x,f.y-c.y); if(d<bd){bd=d;best=f;} }
+  return best?{p:best,d:bd}:null;
+}
+function findNearestCreature(cre,maxR){
+  if(turbo&&gpuOK&&nearCache&&nearCache.has(cre.id)){ const e=nearCache.get(cre.id); if(e.co&&e.co.alive&&e.cd<=maxR) return {p:e.co,d:e.cd}; return null; }
+  const c=centroid(cre); let best=null,bd=maxR;
+  for(const o of creatures){ if(o===cre||!o.alive)continue; const oc=centroid(o); const d=Math.hypot(oc.x-c.x,oc.y-c.y); if(d<bd){bd=d;best=o;} }
+  return best?{p:best,d:bd}:null;
+}
+
+function stepCreature(cre){
+  const bredFlag=cre.bredThisTick; cre.bredThisTick=false; cre.ateThisTick=false;
+  const preE=cre.energy;
+  const c=centroid(cre), N=cre.cur.length, g=cre.genome;
+  const r=richness(c.x,c.y), h=harshness(c.x,c.y);
+  const nf=findNearestFood(cre,SENSOR_RANGE);
+  const ncR=findNearestCreature(cre,SENSOR_RANGE);
+  const nc=ncR?ncR.p:null, ncDist=ncR?ncR.d:9999;
+  const tagSim = nc ? 1-clamp(Math.hypot(...g.tag.map((t,i)=>t-nc.genome.tag[i]))/2,0,1) : 0;
+  cre.sensors=[cre.energy/START_E, cre.age/g.maxAge, r, h,
+    nf?clamp((nf.p.x-c.x)/SENSOR_RANGE,-1,1):0, nf?clamp((nf.p.y-c.y)/SENSOR_RANGE,-1,1):0,
+    nc?clamp((centroid(nc).x-c.x)/SENSOR_RANGE,-1,1):0, nc?clamp((centroid(nc).y-c.y)/SENSOR_RANGE,-1,1):0,
+    tagSim, 1];
+  const motor=forwardBrain(cre);
+  let spd=0;
+  for(let i=0;i<N;i++){ const p=cre.cur[i],o=cre.old[i]; let vx=(p.x-o.x),vy=(p.y-o.y); spd+=Math.abs(vx)+Math.abs(vy); vx*=DRAG-DRAGQ*Math.abs(vx); vy*=DRAG-DRAGQ*Math.abs(vy); cre.old[i]={x:p.x,y:p.y}; p.x+=vx; p.y+=vy; }
+  spd/=N;
+  let cost=0;
+  for(let it=0;it<ITERS;it++){
+    for(const s of g.springs){
+      const A=cre.cur[s.a],B=cre.cur[s.b]; const base=s.len*g.scale;
+      let target=base;
+      if(s.muscle){ const m=(motor[s.id]||0)*s.amp*MAXPULL; target=base*(1+m); if(it===0)cost+=Math.abs(motor[s.id]||0); }
+      let dx=B.x-A.x,dy=B.y-A.y,d=Math.hypot(dx,dy)||0.001; const diff=(d-target)/d*STIFF;
+      A.x+=dx*diff*0.5; A.y+=dy*diff*0.5; B.x-=dx*diff*0.5; B.y-=dy*diff*0.5;
+    }
+  }
+  for(const p of cre.cur){ p.x=clamp(p.x,10,WORLD_W-10); p.y=clamp(p.y,10,WORLD_H-10); }
+  const metab=(BASE_METAB*N*g.scale)*(0.6+0.8*h);
+  cre.energy-=metab+MUSCLE_COST*cost*g.scale;
+  for(const f of foods){ if(f.e===1 && Math.hypot(f.x-c.x,f.y-c.y)<EAT_RADIUS && cre.energy<START_E){ cre.energy=Math.min(START_E,cre.energy+40); f.e=0; f.t=0; cre.ateThisTick=true; } }
+  // evolved reward: fixed sensation vocabulary, mutable weights
+  const chans=[cre.ateThisTick?1:0, bredFlag?1:0, clamp((cre.energy-preE)/5,-1,1), ncDist<40?1:0, nc?0:1, clamp(spd/3,0,1), cre.age/g.maxAge, tagSim, cre.energy/START_E, 1];
+  let rsum=0; for(let i=0;i<10;i++) rsum+=g.reward.w[i]*chans[i];
+  cre.rewardAcc+=tanh(rsum);
+  cre.learnClock++;
+  if(cre.learnClock%LEARN_EVERY===0){
+    const gain=cre.rewardAcc-cre.prevWindow;
+    if(cre.trying){ if(gain>0) cre.keptW=cre.effW.slice(); else cre.effW=cre.keptW.slice(); }
+    cre.prevWindow=cre.rewardAcc; cre.rewardAcc=0;
+    cre.effW=cre.keptW.map(w=>w+(Math.random()<0.35?gauss()*0.3:0));
+    cre.trying=true;
+  }
+  cre.age++; if(cre.cooldown>0)cre.cooldown--;
+  const hazard=LUCK_HAZARD+SENESCENCE_K*Math.pow(cre.age/g.maxAge,3);
+  if(cre.energy<=0 || cre.age>g.maxAge || Math.random()<hazard){ cre.alive=false; deaths++; }
+}
+function tryBreed(){
+  if(creatures.length>=popCap()) return;
+  const ready=creatures.filter(c=>c.alive && c.energy>REPRO_ENERGY_MIN && c.cooldown<=0);
+  for(let i=0;i<ready.length;i++){
+    const A=ready[i]; if(A.cooldown>0)continue;
+    const cA=centroid(A);
+    for(let j=i+1;j<ready.length;j++){
+      const B=ready[j]; if(B.cooldown>0)continue;
+      const cB=centroid(B); if(Math.hypot(cA.x-cB.x,cA.y-cB.y)>MATE_RANGE)continue;
+      const tagDist=Math.hypot(...A.genome.tag.map((t,k)=>t-B.genome.tag[k]));
+      if(tagDist>COMPAT_T)continue;
+      const hd=Math.abs(A.genome.pref.hue-B.genome.hue); const hueDist=Math.min(hd,360-hd);
+      const scoreA=1-clamp((Math.abs(A.genome.pref.size-B.genome.scale)+hueDist/180+A.genome.pref.tagW*tagDist)/3,0,1);
+      const hd2=Math.abs(B.genome.pref.hue-A.genome.hue); const hueDist2=Math.min(hd2,360-hd2);
+      const scoreB=1-clamp((Math.abs(B.genome.pref.size-A.genome.scale)+hueDist2/180+B.genome.pref.tagW*tagDist)/3,0,1);
+      if((scoreA+scoreB)/2<MATE_SCORE_T)continue;
+      const costA=REPRO_BASE+REPRO_PER_NODE*A.cur.length*A.genome.scale, costB=REPRO_BASE+REPRO_PER_NODE*B.cur.length*B.genome.scale;
+      if(A.energy<costA||B.energy<costB)continue;
+      A.energy-=costA; B.energy-=costB; A.cooldown=MATE_COOLDOWN; B.cooldown=MATE_COOLDOWN; A.bredThisTick=true; B.bredThisTick=true;
+      const child=mutate(cross(A.genome,B.genome));
+      const spot={x:(cA.x+cB.x)/2+rnd(-10,10), y:(cA.y+cB.y)/2+rnd(-10,10)};
+      spawn(child,spot.x,spot.y); creatures[creatures.length-1].energy=CHILD_START_E;
+      births++;
+    }
+  }
+}
+function tick(){
+  stepFood();
+  for(const c of creatures) if(c.alive) stepCreature(c);
+  tryBreed();
+  creatures=creatures.filter(c=>c.alive);
+  if(creatures.length<4){ for(let i=0;i<3;i++) spawn(mutate(newGenome()), rnd(200,WORLD_W-200), rnd(200,WORLD_H-200)); }
+  ticks++;
+  if(turbo&&gpuOK&&ticks%6===0) gpuDispatch();
+}
+resetWorld();
+
+// ---- optional WebGPU neighbor-search accelerator (feature-detected, safe fallback) ----
+let gpuOK=false, gpuDevice=null, gpuPipeline=null, gpuBufs=null, gpuBusy=false, nearCache=null;
+const MAXC=160, MAXF=500;
+function withTimeout(p,ms){ return Promise.race([p, new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]); }
+async function initGPU(){
+  try{
+    if(!navigator.gpu){ document.getElementById('gpustat').textContent='unavailable'; return; }
+    const adapter=await withTimeout(navigator.gpu.requestAdapter(),3000);
+    if(!adapter){ document.getElementById('gpustat').textContent='unavailable'; return; }
+    const device=await withTimeout(adapter.requestDevice(),3000);
+    const shader=device.createShaderModule({code:`
+      struct Params { nc:u32, nf:u32 };
+      @group(0) @binding(0) var<storage,read> cpos: array<vec2<f32>>;
+      @group(0) @binding(1) var<storage,read> fpos: array<vec2<f32>>;
+      @group(0) @binding(2) var<storage,read> fact: array<f32>;
+      @group(0) @binding(3) var<storage,read_write> outp: array<vec4<f32>>;
+      @group(0) @binding(4) var<uniform> params: Params;
+      @compute @workgroup_size(64)
+      fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+        let i = gid.x;
+        if (i >= params.nc) { return; }
+        var bestF = 1.0e9; var bfi = -1.0;
+        var bestC = 1.0e9; var bci = -1.0;
+        let p = cpos[i];
+        for (var f: u32 = 0u; f < params.nf; f = f + 1u) {
+          if (fact[f] > 0.5) { let d = distance(p, fpos[f]); if (d < bestF) { bestF = d; bfi = f32(f); } }
+        }
+        for (var j: u32 = 0u; j < params.nc; j = j + 1u) {
+          if (j != i) { let d = distance(p, cpos[j]); if (d < bestC) { bestC = d; bci = f32(j); } }
+        }
+        outp[i] = vec4<f32>(bfi, bestF, bci, bestC);
+      }`});
+    const pipeline=device.createComputePipeline({layout:'auto',compute:{module:shader,entryPoint:'main'}});
+    const cposBuf=device.createBuffer({size:MAXC*8,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});
+    const fposBuf=device.createBuffer({size:MAXF*8,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});
+    const factBuf=device.createBuffer({size:MAXF*4,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});
+    const outBuf=device.createBuffer({size:MAXC*16,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC});
+    const staging=device.createBuffer({size:MAXC*16,usage:GPUBufferUsage.MAP_READ|GPUBufferUsage.COPY_DST});
+    const paramBuf=device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
+    const bindGroup=device.createBindGroup({layout:pipeline.getBindGroupLayout(0),entries:[
+      {binding:0,resource:{buffer:cposBuf}},{binding:1,resource:{buffer:fposBuf}},
+      {binding:2,resource:{buffer:factBuf}},{binding:3,resource:{buffer:outBuf}},{binding:4,resource:{buffer:paramBuf}}
+    ]});
+    gpuDevice=device; gpuPipeline=pipeline; gpuBufs={cposBuf,fposBuf,factBuf,outBuf,staging,paramBuf,bindGroup};
+    gpuOK=true; document.getElementById('gpustat').textContent='ready';
+  }catch(e){ gpuOK=false; document.getElementById('gpustat').textContent='unavailable'; }
+}
+initGPU();
+setTimeout(()=>{ if(!gpuOK && document.getElementById('gpustat').textContent==='checking…') document.getElementById('gpustat').textContent='unavailable'; },4000);
+async function gpuDispatch(){
+  if(!gpuOK||gpuBusy) return; gpuBusy=true;
+  try{
+    const list=creatures.slice(0,MAXC); const n=list.length, nf=Math.min(foods.length,MAXF);
+    const cposArr=new Float32Array(MAXC*2), fposArr=new Float32Array(MAXF*2), factArr=new Float32Array(MAXF);
+    for(let i=0;i<n;i++){const c=centroid(list[i]); cposArr[i*2]=c.x; cposArr[i*2+1]=c.y;}
+    for(let f=0;f<nf;f++){fposArr[f*2]=foods[f].x; fposArr[f*2+1]=foods[f].y; factArr[f]=foods[f].e;}
+    const {cposBuf,fposBuf,factBuf,outBuf,staging,paramBuf,bindGroup}=gpuBufs;
+    gpuDevice.queue.writeBuffer(cposBuf,0,cposArr); gpuDevice.queue.writeBuffer(fposBuf,0,fposArr);
+    gpuDevice.queue.writeBuffer(factBuf,0,factArr); gpuDevice.queue.writeBuffer(paramBuf,0,new Uint32Array([n,nf]));
+    const enc=gpuDevice.createCommandEncoder(); const pass=enc.beginComputePass();
+    pass.setPipeline(gpuPipeline); pass.setBindGroup(0,bindGroup); pass.dispatchWorkgroups(Math.ceil(MAXC/64)); pass.end();
+    enc.copyBufferToBuffer(outBuf,0,staging,0,MAXC*16); gpuDevice.queue.submit([enc.finish()]);
+    await staging.mapAsync(GPUMapMode.READ);
+    const res=new Float32Array(staging.getMappedRange().slice(0)); staging.unmap();
+    const map=new Map();
+    for(let i=0;i<n;i++){
+      const fi=res[i*4], fo=fi>=0?foods[fi]:null;
+      const ci=res[i*4+2], co=ci>=0?list[ci]:null;
+      map.set(list[i].id,{fo,fd:res[i*4+1],co,cd:res[i*4+3]});
+    }
+    nearCache=map;
+  }catch(e){ gpuOK=false; document.getElementById('gpustat').textContent='error, using CPU'; }
+  gpuBusy=false;
+}
+
+let running=false, speed=1, camX=0, camY=0, camScale=0.5;
+function updateCam(){ if(!creatures.length)return; let x=0,y=0; for(const c of creatures){const p=centroid(c); x+=p.x; y+=p.y;} x/=creatures.length; y/=creatures.length; camX+=(x-camX)*0.02; camY+=(y-camY)*0.02; }
+function draw(){
+  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
+  ctx.imageSmoothingEnabled=true; ctx.drawImage(biomeTex,0,0,240,140,0,0,w,h);
+  ctx.save();
+  const sx=w/(WORLD_W*camScale), sy=h/(WORLD_H*camScale); const s=camScale*Math.min(sx,sy);
+  ctx.translate(w/2-camX*s,h/2-camY*s);
+  ctx.fillStyle='rgba(255,255,255,0.55)';
+  for(const f of foods) if(f.e===1){ ctx.beginPath(); ctx.arc(f.x*s,f.y*s,2.2,0,7); ctx.fill(); }
+  for(const c of creatures){
+    ctx.strokeStyle=`hsl(${c.genome.hue},65%,55%)`; ctx.fillStyle=`hsl(${c.genome.hue},60%,50%)`; ctx.lineWidth=1.6;
+    for(const sp of c.genome.springs){ const A=c.cur[sp.a],B=c.cur[sp.b]; ctx.beginPath(); ctx.moveTo(A.x*s,A.y*s); ctx.lineTo(B.x*s,B.y*s); ctx.stroke(); }
+    for(const p of c.cur){ ctx.beginPath(); ctx.arc(p.x*s,p.y*s,2.6*c.genome.scale,0,7); ctx.fill(); }
+  }
+  ctx.restore();
+  document.getElementById('ticks').textContent=ticks;
+  document.getElementById('pop').textContent=creatures.length;
+  document.getElementById('births').textContent=births;
+  document.getElementById('avgage').textContent=creatures.length?Math.round(creatures.reduce((s,c)=>s+c.age,0)/creatures.length):0;
+}
+function frame(){
+  if(running){
+    if(turbo){ const t0=performance.now(); let n=0; while(performance.now()-t0<40 && n<3000){ tick(); n++; } }
+    else { for(let i=0;i<speed;i++) tick(); }
+  }
+  updateCam(); draw();
+  requestAnimationFrame(frame);
+}
+fitCanvas(); frame();
+document.getElementById('playBtn').onclick=e=>{running=!running; e.target.textContent=running?'⏸ Pause':'▶ Run';};
+document.getElementById('resetBtn').onclick=()=>resetWorld();
+document.getElementById('turboBtn').onclick=e=>{turbo=!turbo; e.target.classList.toggle('on',turbo);};
+[['s1',1],['s4',4],['s8',8]].forEach(([id,v])=>{ document.getElementById(id).onclick=()=>{speed=v; ['s1','s4','s8'].forEach(x=>document.getElementById(x).classList.remove('on')); document.getElementById(id).classList.add('on');}; });
+</script>
+</body>
+</html>
