@@ -16,15 +16,16 @@ button,select{background:var(--panel2);color:var(--text);border:1px solid var(--
 #side{overflow-y:auto;background:var(--bg);border-left:1px solid var(--line);padding:10px;display:flex;flex-direction:column;gap:10px}section.panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:11px}h2{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--accent);margin:0 0 9px}h3{font-size:11px;margin:10px 0 5px;color:var(--dim);font-weight:500}.metrics{display:grid;grid-template-columns:1fr 1fr;gap:9px 7px}.metric span{font-size:10px;color:var(--dim);display:block;margin-bottom:3px}.metric b{font-size:17px;font-weight:650;letter-spacing:-.5px}.metric.small b{font-size:13px}.minirow{display:flex;justify-content:space-between;gap:6px;margin:5px 0;color:var(--dim)}.minirow b{color:var(--text);font-weight:600;text-align:right}.progress{height:5px;border-radius:5px;background:var(--line);overflow:hidden;margin:9px 0 7px}.progress div{height:100%;width:100%;background:var(--accent);transition:width .15s}#historyCanvas{height:112px;width:100%;display:block;border-radius:4px;background:var(--bg)}.chartlegend{font-size:10px;color:var(--dim);display:flex;gap:10px;margin-top:8px}.chartlegend i{width:10px;height:3px;display:inline-block;vertical-align:middle;margin-right:3px}.hint{font-size:10px;color:var(--dim);line-height:1.55}.sideButtons{display:flex;gap:6px;flex-wrap:wrap}#founderLength{width:100%;accent-color:var(--accent)}#log{font-size:10px;color:var(--dim);max-height:70px;overflow:auto;line-height:1.6}.biomeKey{display:grid;grid-template-columns:1fr 1fr;gap:4px}.swatch{width:9px;height:9px;display:inline-block;margin-right:5px;border-radius:2px;vertical-align:middle}footer{padding:6px 14px;color:var(--dim);font-size:10px;line-height:1.5;border-top:1px solid var(--line);flex-shrink:0}footer b{color:var(--warn)}
 @media(max-width:920px){#workspace{grid-template-columns:minmax(0,1fr) 255px}#side{padding:7px}}
 @media(max-width:650px){body{min-height:620px}header{padding:8px 10px}#workspace{grid-template-columns:1fr;grid-template-rows:minmax(280px,53%) minmax(230px,47%)}#side{border-left:0;border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start}section.panel{padding:9px}#side section:first-child{grid-column:1/-1}.bar{padding:6px 8px;gap:5px}#overlayInfo{font-size:10px}}
-</style></style>
+</style>
 </head>
 <body>
 <header><div><h1>Open Ecosystem <span style="font-size:10px;color:var(--dim);font-weight:400">— living world</span></h1>
 <p class="sub">An evolving open ecosystem: neural controllers, heritable learning strategies, layered habitats, real seasonal pressure and a long, gradually fading founder period.</p></div></header>
 <div class="bar">
  <button id="playBtn">▶ Run</button><button id="resetBtn">↺ New world</button>
- <button id="s1" class="on">1×</button><button id="s4">4×</button><button id="s8">8×</button><button id="turboBtn">⚡ Turbo</button>
- <span class="stat">GPU <b id="gpustat">checking…</b></span>
+ <button id="s1" class="on">1×</button><button id="s4">4×</button><button id="s8">8×</button><button id="turboBtn" title="Run simulation at maximum available speed, drawing only every 500ms">⚡ Turbo (max)</button>
+ <span class="stat">Rate <b id="tickRate">0 ticks/s</b></span>
+ <span class="stat" title="WebGPU capability is detected, but the current simulation uses a faster CPU spatial grid to avoid stale GPU readback">GPU <b id="gpustat">checking…</b></span>
  <span class="stat">Founder <b id="founder">100%</b></span>
  <span class="stat">Tick <b id="ticks">0</b></span>
  <span class="stat">Population <b id="pop">26</b></span>
@@ -39,15 +40,17 @@ button,select{background:var(--panel2);color:var(--text);border:1px solid var(--
  <aside id="side">
   <section class="panel"><h2>Founder ecology</h2>
    <div class="minirow"><span>Help remaining</span><b id="founderSide">100%</b></div><div class="progress"><div id="founderBar"></div></div>
-   <label for="founderLength" class="hint">Founder phase ends after <b id="founderEndLabel">12,000</b> ticks</label>
-   <input type="range" id="founderLength" min="6000" max="30000" step="2000" value="12000"/>
-   <div class="hint">The first 20% is fully abundant; resources and temporary learning credit then decline gradually. Moving this slider also changes the length of the current phase.</div>
+   <label for="founderLength" class="hint">Founder phase ends after <b id="founderEndLabel">180,000</b> ticks</label>
+   <input type="range" id="founderLength" min="60000" max="500000" step="20000" value="180000"/>
+   <div class="hint">Food begins declining gently after the first 3%. Pressure increases slowly over many lifetimes. Temporary movement and food-learning credit fade completely by the end. The slider changes this world immediately.</div>
+   <div class="minirow"><span>Ecological pressure</span><b id="ecoPressure">0%</b></div>
+   <div class="minirow"><span>Movement training</span><b id="motionAssist">100%</b></div>
   </section>
   <section class="panel"><h2>Population</h2><div class="metrics">
    <div class="metric"><span>Alive</span><b id="mAlive">26</b></div><div class="metric"><span>Average energy</span><b id="mEnergy">100</b></div>
    <div class="metric small"><span>Births / deaths</span><b id="mBirthDeath">0 / 0</b></div><div class="metric small"><span>Mean / oldest age</span><b id="mAges">0 / 0</b></div>
    <div class="metric small"><span>Generations reached</span><b id="mGen">0</b></div><div class="metric small"><span>Founding migrations</span><b id="mMigrations">0</b></div>
-  </div><div class="minirow"><span>Food consumed</span><b id="mEaten">0</b></div><div class="minirow"><span>Deaths: hunger / age / random</span><b id="mDeaths">0 / 0</b></div>
+  </div><div class="minirow"><span>Mean inherited lifespan</span><b id="mLifespan">—</b></div><div class="minirow"><span>Food consumed</span><b id="mEaten">0</b></div><div class="minirow"><span>Deaths: hunger / age / random</span><b id="mDeaths">0 / 0</b></div>
    <div class="sideButtons"><button id="immigrationBtn" class="on" title="New randomly generated founders if population drops below four">Immigration: on</button></div>
    <p class="hint">Immigration prevents an empty screen but counts as an outside intervention. Turn it off to observe genuine extinction.</p></section>
   <section class="panel"><h2>Learning & evolution</h2>
@@ -56,6 +59,9 @@ button,select{background:var(--panel2);color:var(--text);border:1px solid var(--
    <div class="minirow"><span>Average perturbation size</span><b id="mSigma">—</b></div>
    <div class="minirow"><span>Average brain connections</span><b id="mBrain">—</b></div>
    <div class="minirow"><span>Mean food / mating reward</span><b id="mRewards">—</b></div>
+   <div class="minirow"><span>Avg net travel / 250 ticks</span><b id="mTravel">—</b></div>
+   <div class="minirow"><span>Exploring / alive</span><b id="mExplorers">—</b></div>
+   <div class="minirow"><span>Avg lifetime range</span><b id="mRange">—</b></div>
   </section>
   <section class="panel"><h2>Population history</h2><canvas id="historyCanvas" aria-label="Recent history chart"></canvas>
     <div class="chartlegend"><span><i style="background:#89e995"></i>Population</span><span><i style="background:#e9cc7d"></i>Food</span><span><i style="background:#89c5fb"></i>Avg energy</span></div><p class="hint">Lines independently scaled. Snapshots taken every 100 ticks.</p></section>
@@ -70,7 +76,7 @@ button,select{background:var(--panel2);color:var(--text);border:1px solid var(--
   <section class="panel"><h2>Recent events</h2><div id="log">World forming…</div></section>
  </aside>
 </div>
-<footer><b>Natural selection remains intact:</b> no free energy, invulnerability, fixed food-seeking policy or guaranteed offspring. Extra founder food and learning-only shaping fade to zero; complex biomes and seasonal effects persist. Map layers reveal what creatures experience. All evolutionary outcomes are emergent, not guaranteed.</footer>
+<footer><b>Founder phase:</b> rich founding habitats, then a long and gradually tightening ecology. Temporary learning feedback rewards real travel, novel territory and progress toward food; it changes neither energy nor reproduction and reaches zero at the end. Directional feet make crawling mechanically possible, but gaits are not scripted; extinction remains possible. Turbo changes speed only.</footer>
 <script>
 const cv=document.getElementById('c'),ctx=cv.getContext('2d');
 function rnd(a,b){return a+Math.random()*(b-a)}
@@ -83,19 +89,20 @@ const WORLD_W=2400, WORLD_H=1400;
 const CONNECT_R=34, STIFF=0.26, ITERS=3, DRAG=0.985, DRAGQ=0.006, MAXPULL=0.4;
 const BASE_METAB=0.006, MUSCLE_COST=0.012, EAT_RADIUS=16, SENSOR_RANGE=200;
 const REPRO_ENERGY_MIN=65, REPRO_BASE=18, REPRO_PER_NODE=2.6, CHILD_START_E=48, MATE_RANGE=34, MATE_COOLDOWN=260, MATE_SCORE_T=0.62, COMPAT_T=0.85;
-const SENESCENCE_K=0.0000035, LUCK_HAZARD=0.00003, POP_CAP=60, TURBO_POP_CAP=140, START_E=100;
+const SENESCENCE_K=0.0000006, LUCK_HAZARD=0.000009, POP_CAP=140, START_E=100;
 const MAXH=12, MAXCONN=50;
 const FOOD_NORMAL=220, FOOD_FOUNDER=720, SENSOR_COUNT=15;
-let founderEnd=12000; const FOUNDER_HOLD_FRACTION=0.20;
+let founderEnd=180000; const FOUNDER_HOLD_FRACTION=0.03;
 const WORLD_TICKS_PER_YEAR=4800;
-function popCap(){return turbo?TURBO_POP_CAP:POP_CAP;}
+// Playback speed does not change carrying capacity or natural-selection rules.
+function popCap(){return POP_CAP;}
 function founderStrength(){
   const hold=founderEnd*FOUNDER_HOLD_FRACTION;
   if(ticks<=hold)return 1;
   if(ticks>=founderEnd)return 0;
   const u=(ticks-hold)/(founderEnd-hold);
-  const smooth=u*u*(3-2*u);
-  return 1-smooth;
+  // Most early decline is very gentle; the slope steepens only after multiple lifetimes.
+  return 1-(.30*u+.70*u*u*(3-2*u));
 }
 
 // ---- persistent terrain, hydrology, climate and living biomes ----
@@ -189,11 +196,11 @@ let foods=[],founderColonies=[],foodEaten=0;
 const FOOD_TYPES=[{name:'Forage',energy:32,growth:.78,color:'#e1dfa2'},
                   {name:'Berries',energy:44,growth:1.18,color:'#fa986b'},
                   {name:'Fungi',energy:49,growth:1.55,color:'#c7aaec'}];
-function foodCandidate(center){
+function foodCandidate(center,spread=130){
  let best=null,score=-1;
  for(let k=0;k<10;k++){
-  const x=center?clamp(center.x+gauss()*130,35,WORLD_W-35):rnd(20,WORLD_W-20);
-  const y=center?clamp(center.y+gauss()*130,35,WORLD_H-35):rnd(20,WORLD_H-20);
+  const x=center?clamp(center.x+gauss()*spread,35,WORLD_W-35):rnd(20,WORLD_W-20);
+  const y=center?clamp(center.y+gauss()*spread,35,WORLD_H-35):rnd(20,WORLD_H-20);
   const t=terrainAt(x,y);if(t.water)continue;
   const q=t.fertility+(center?.22:0)+Math.random()*.32;
   if(q>score){score=q;best={x,y,t};}
@@ -202,32 +209,82 @@ function foodCandidate(center){
  for(let k=0;k<300;k++){let x=rnd(20,WORLD_W-20),y=rnd(20,WORLD_H-20);if(!terrainAt(x,y).water)return {x,y,t:terrainAt(x,y)};}
  return {x:WORLD_W/2,y:WORLD_H/2,t:terrainAt(WORLD_W/2,WORLD_H/2)};
 }
-function seedFood(){foods=[];
- for(let i=0;i<FOOD_FOUNDER;i++){
-  let center=i>=FOOD_NORMAL?founderColonies[Math.floor((i-FOOD_NORMAL)/Math.max(1,Math.ceil((FOOD_FOUNDER-FOOD_NORMAL)/founderColonies.length)))%founderColonies.length]:null;
-  const {x,y,t}=foodCandidate(center);
+function seedFood(){
+ foods=[];
+ // Keep a permanent food base in the same fertile valleys as the founder colonies,
+ // as well as open-world resources. This is habitat heterogeneity, not creature feeding.
+ for(let i=0;i<FOOD_NORMAL;i++){
+  const center=i<140?founderColonies[i%founderColonies.length]:null;
+  const {x,y,t}=foodCandidate(center,center?110:undefined);
   const type=t.biome===1||t.biome===2?(Math.random()<.6?2:1):t.biome===3||t.biome===7?(Math.random()<.7?0:1):Math.random()<.7?0:1;
-  foods.push({x,y,e:Math.random()<.94?1:0,t:0,type,biome:t.biome});
+  foods.push({x,y,e:Math.random()<.94?1:0,t:0,type,biome:t.biome,founderOnly:false,threshold:0,active:true});
+ }
+ const perColony=(FOOD_FOUNDER-FOOD_NORMAL)/founderColonies.length;
+ for(let rank=0;rank<perColony;rank++){
+  for(let col=0;col<founderColonies.length;col++){
+   const {x,y,t}=foodCandidate(founderColonies[col],78);
+   const type=t.biome===1||t.biome===2?(Math.random()<.6?2:1):t.biome===3||t.biome===7?(Math.random()<.7?0:1):Math.random()<.7?0:1;
+   // Interleaved fade thresholds prevent the last colonies being stripped first.
+   const threshold=(rank+Math.random())/perColony;
+   foods.push({x,y,e:Math.random()<.94?1:0,t:0,type,biome:t.biome,founderOnly:true,threshold,active:true});
+  }
  }
 }
 function stepFood(){
- const assist=founderStrength(),activeCount=Math.round(FOOD_NORMAL+(FOOD_FOUNDER-FOOD_NORMAL)*assist);
- const w=weather(),regrowBoost=1+assist*1.3;
- for(let i=0;i<foods.length;i++){
-  const f=foods[i];if(i>=activeCount){f.e=0;f.t=0;continue;}
+ const assist=founderStrength(),w=weather(),regrowBoost=1+assist*1.3;
+ for(const f of foods){
+  f.active=!f.founderOnly||f.threshold<assist;
+  if(!f.active){f.e=0;f.t=0;continue;}
   if(f.e===0){f.t++;
    const t=terrainAt(f.x,f.y),wt=localWeather(t);
    const wetBoost=clamp(.60+wt.moist*.85,.33,1.52),seasonBoost=.68+.46*w.rain;
    const need=(105+(1-t.fertility)*310)*FOOD_TYPES[f.type].growth/(wetBoost*seasonBoost*regrowBoost);
-   if(f.t>=need)f.e=1;
+   if(f.t>=need){
+    f.e=1;
+    // After grazing, plants regenerate from seeds/spores in neighbouring soil,
+    // rather than endlessly reappearing under one stationary grazer. This
+    // creates a gentle, biologically motivated need to forage and move even
+    // before the overall founder food supply begins declining.
+    if(Math.random()<.72){
+     const spread=26+15*(1-assist);
+     for(let attempt=0;attempt<5;attempt++){
+      const nx=clamp(f.x+gauss()*spread,15,WORLD_W-15);
+      const ny=clamp(f.y+gauss()*spread,15,WORLD_H-15);
+      const land=terrainAt(nx,ny);
+      if(!land.water && land.fertility>.25){f.x=nx;f.y=ny;f.biome=land.biome;break;}
+     }
+    }
+   }
   }
  }
+}
+function foodSiteCount(){return foods.reduce((n,f)=>n+(f.active?1:0),0);}
+
+// A spatial index keeps food search practical in long maximum-speed runs.
+const FOOD_CELL=100;let foodGrid=new Map();
+function foodKey(ix,iy){return ix+','+iy;}
+function buildFoodGrid(){
+ foodGrid.clear();
+ for(const f of foods){if(f.e!==1||!f.active)continue;
+  const key=foodKey(Math.floor(f.x/FOOD_CELL),Math.floor(f.y/FOOD_CELL));
+  let bucket=foodGrid.get(key);if(!bucket)foodGrid.set(key,bucket=[]);
+  bucket.push(f);
+ }
+}
+function nearbyFood(x,y,maxR){
+ const found=[];
+ const x0=Math.floor((x-maxR)/FOOD_CELL),x1=Math.floor((x+maxR)/FOOD_CELL);
+ const y0=Math.floor((y-maxR)/FOOD_CELL),y1=Math.floor((y+maxR)/FOOD_CELL);
+ for(let iy=y0;iy<=y1;iy++)for(let ix=x0;ix<=x1;ix++){
+  const b=foodGrid.get(foodKey(ix,iy));if(b)for(const f of b)if(f.e===1&&f.active)found.push(f);
+ }
+ return found;
 }
 
 // ---- genome ----
 let sidCounter=1;
 function newBody(){
-  const n=Math.floor(rnd(4,7)); const nodes=[]; for(let i=0;i<n;i++)nodes.push({x:rnd(-20,20),y:rnd(-20,20),grip:rnd(.17,.89)});
+  const n=Math.floor(rnd(4,7)); const nodes=[]; for(let i=0;i<n;i++)nodes.push({x:rnd(-20,20),y:rnd(-20,20),grip:rnd(.25,.91),bristle:rnd(.018,.075),bristleAngle:rnd(0,Math.PI*2)});
   const springs=[];
   for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){
     const dx=nodes[i].x-nodes[j].x, dy=nodes[i].y-nodes[j].y;
@@ -252,13 +309,26 @@ function newGenome(){
     scale:rnd(0.8,1.2), hue:rnd(0,360),
     tag:[rnd(-1,1),rnd(-1,1),rnd(-1,1)],
     pref:{size:rnd(0.7,1.4),hue:rnd(0,360),tagW:rnd(0,1)},
-    maxAge:rnd(1800,4200),generation:0,
+    maxAge:rnd(11000,21000),generation:0,
+    rhythm:rnd(0.07,0.22),
     reward:{w:rw},
     learn:{interval:Math.round(rnd(38,53)), sigma:rnd(0.14,0.24), edits:Math.floor(rnd(1,4))},
     brain:{hidden:[], nextH:0, conn:emptyConn(springs)}
   };
 }
-function emptyConn(springs){ const conn=[]; for(const s of springs){ if(s.muscle){conn.push({from:'s'+Math.floor(rnd(0,SENSOR_COUNT)),to:'m'+s.id,w:rnd(-1,1)});if(Math.random()<.38)conn.push({from:'s'+Math.floor(rnd(13,15)),to:'m'+s.id,w:rnd(-.6,.6)});} } return conn; }
+function emptyConn(springs){
+ const conn=[];
+ for(const s of springs){if(!s.muscle)continue;
+  // Untrained motor circuits get variable phase inputs, not a pre-programmed gait.
+  // Evolution/learning must still discover coordinated, useful locomotion.
+  const to='m'+s.id;
+  conn.push({from:'s'+Math.floor(rnd(0,SENSOR_COUNT)),to,w:rnd(-1,1)});
+  conn.push({from:'s'+Math.floor(rnd(13,15)),to,w:rnd(-1.15,1.15)});
+  conn.push({from:'s'+Math.floor(rnd(4,6)),to,w:rnd(-.55,.55)});
+  if(Math.random()<.60)conn.push({from:'s'+Math.floor(rnd(13,15)),to,w:rnd(-.8,.8)});
+ }
+ return conn;
+}
 function cloneG(g){return JSON.parse(JSON.stringify(g));}
 function pruneConn(g){
   const validTo=new Set(g.brain.hidden.map(h=>'h'+h).concat(g.springs.filter(s=>s.muscle).map(s=>'m'+s.id)));
@@ -267,11 +337,11 @@ function pruneConn(g){
 }
 function mutateBody(g){
   const R=0.15;
-  g.nodes=g.nodes.map(n=>({x:n.x+(Math.random()<R?gauss()*5:0), y:n.y+(Math.random()<R?gauss()*5:0), grip:clamp((n.grip??.5)+(Math.random()<R?gauss()*.075:0),.04,.96)}));
+  g.nodes=g.nodes.map(n=>({x:n.x+(Math.random()<R?gauss()*5:0), y:n.y+(Math.random()<R?gauss()*5:0), grip:clamp((n.grip??.5)+(Math.random()<R?gauss()*.075:0),.04,.96), bristle:clamp((n.bristle??.16)+(Math.random()<R?gauss()*.035:0),0,.97),bristleAngle:(n.bristleAngle??0)+(Math.random()<R?gauss()*.18:0)}));
   g.springs=g.springs.map(s=>({...s, len:Math.max(6,s.len+(Math.random()<R?gauss()*3:0)), amp:clamp(s.amp+(Math.random()<R?gauss()*0.15:0),0.1,1), muscle:Math.random()<0.03?1-s.muscle:s.muscle}));
   if(Math.random()<0.12 && g.nodes.length<9){
     const base=Math.floor(rnd(0,g.nodes.length));
-    const nn={x:g.nodes[base].x+rnd(-16,16), y:g.nodes[base].y+rnd(-16,16),grip:clamp(g.nodes[base].grip+gauss()*.09,.04,.96)};
+    const nn={x:g.nodes[base].x+rnd(-16,16), y:g.nodes[base].y+rnd(-16,16),grip:clamp(g.nodes[base].grip+gauss()*.09,.04,.96),bristle:clamp((g.nodes[base].bristle??.16)+gauss()*.045,0,.97),bristleAngle:(g.nodes[base].bristleAngle??0)+gauss()*.25};
     g.nodes.push(nn); const idx=g.nodes.length-1;
     g.springs.push({id:sidCounter++, a:base,b:idx, len:16, muscle:Math.random()<0.6?1:0, amp:rnd(0.4,1)});
     for(let j=0;j<g.nodes.length-1;j++){ if(j===base)continue; if(Math.hypot(nn.x-g.nodes[j].x,nn.y-g.nodes[j].y)<CONNECT_R && Math.random()<0.4) g.springs.push({id:sidCounter++,a:j,b:idx,len:Math.hypot(nn.x-g.nodes[j].x,nn.y-g.nodes[j].y),muscle:Math.random()<0.5?1:0,amp:rnd(0.4,1)}); }
@@ -288,7 +358,8 @@ function mutateBody(g){
   g.pref.size=clamp(g.pref.size+(Math.random()<R?gauss()*0.15:0),0.4,2);
   g.pref.hue=(g.pref.hue+(Math.random()<R?gauss()*25:0)+360)%360;
   g.pref.tagW=clamp(g.pref.tagW+(Math.random()<R?gauss()*0.2:0),0,1);
-  g.maxAge=clamp(g.maxAge+(Math.random()<R?gauss()*150:0),1200,5200);
+  g.maxAge=clamp(g.maxAge+(Math.random()<R?gauss()*420:0),7000,29000);
+  g.rhythm=clamp((g.rhythm??.14)+(Math.random()<R?gauss()*.014:0),.035,.35);
 }
 function mutateReward(g){
   g.reward.w=g.reward.w.map(v=>clamp(v+(Math.random()<0.12?gauss()*0.35:0),-2,2));
@@ -320,6 +391,7 @@ function cross(a,b){
   c.tag=c.tag.map((_,i)=>Math.random()<0.5?a.tag[i]:b.tag[i]);
   c.pref={size:Math.random()<0.5?a.pref.size:b.pref.size, hue:Math.random()<0.5?a.pref.hue:b.pref.hue, tagW:Math.random()<0.5?a.pref.tagW:b.pref.tagW};
   c.maxAge=Math.random()<0.5?a.maxAge:b.maxAge;
+  c.rhythm=Math.random()<.5?(a.rhythm??.14):(b.rhythm??.14);
   c.reward={w:a.reward.w.map((v,i)=>Math.random()<0.5?v:b.reward.w[i])};
   const la=a.learn||{interval:45,sigma:0.2,edits:2}, lb=b.learn||{interval:45,sigma:0.2,edits:2};
   c.learn={interval:Math.random()<0.5?la.interval:lb.interval, sigma:Math.random()<0.5?la.sigma:lb.sigma, edits:Math.random()<0.5?la.edits:lb.edits};
@@ -338,14 +410,19 @@ function forwardBrain(cre){
   return motorOut;
 }
 
-let creatures=[], ticks=0, births=0, deaths=0, starvationDeaths=0, ageDeaths=0, hazardDeaths=0, migrations=0, acceptedTrials=0, rejectedTrials=0, cid=1, turbo=false, nearCache=null, worldEpoch=0, immigration=true, selectedId=null, camX=WORLD_W/2, camY=WORLD_H/2, camScale=1.2, autoFollow=true;
+let creatures=[], ticks=0, births=0, deaths=0, starvationDeaths=0, ageDeaths=0, hazardDeaths=0, migrations=0, acceptedTrials=0, rejectedTrials=0, cid=1, nearCache=null, worldEpoch=0, immigration=true, selectedId=null, camX=WORLD_W/2, camY=WORLD_H/2, camScale=1.2, autoFollow=true;
 const history=[],eventLog=[];
 function addLog(s){eventLog.unshift(s);if(eventLog.length>15)eventLog.pop();}
 function spawn(genome,x,y){
   const cur=genome.nodes.map(n=>({x:x+n.x*genome.scale,y:y+n.y*genome.scale}));
   const effW=genome.brain.conn.map(c=>c.w);
-  creatures.push({id:cid++, genome, cur, old:cur.map(p=>({...p})), energy:START_E, age:0, cooldown:0, neur:{}, alive:true,
-    effW, keptW:effW.slice(),rewardAcc:0,prevWindow:0,learnClock:0,trying:false,ateThisTick:false,bredThisTick:false,foodEaten:0,offspring:0,accepted:0,rejected:0,moveDistance:0,lastX:x,lastY:y});
+  const center={x:cur.reduce((a,p)=>a+p.x,0)/cur.length,y:cur.reduce((a,p)=>a+p.y,0)/cur.length};
+  creatures.push({id:cid++, genome, cur, center, old:cur.map(p=>({...p})), energy:START_E, age:0, cooldown:0, neur:{}, alive:true,
+    effW,keptW:effW.slice(),rewardAcc:0,baselineScore:0,learnClock:0,trying:false,
+    windowStart:{x,y},visitedCells:new Set([Math.floor(x/28)+','+Math.floor(y/28)]),newCellsWindow:0,
+    trail:[],travel250:0,birthX:x,birthY:y,maxRange:0,
+    ateThisTick:false,bredThisTick:false,foodEaten:0,offspring:0,accepted:0,rejected:0,
+    moveDistance:0,lastX:x,lastY:y});
 }
 function richFounderCenter(){
  let best=null,br=-1;
@@ -357,22 +434,32 @@ function richFounderCenter(){
  return best||{x:WORLD_W/2,y:WORLD_H/2};
 }
 function seedPopulation(){
- creatures=[]; founderColonies=Array.from({length:4},()=>richFounderCenter());
+ creatures=[];
+ const hub=richFounderCenter();
+ // Four genetically diverse families share a single fertile valley during
+ // founding, so the initial population has a real chance to meet and breed.
+ founderColonies=Array.from({length:4},()=>({
+  x:clamp(hub.x+gauss()*21,90,WORLD_W-90),
+  y:clamp(hub.y+gauss()*21,90,WORLD_H-90)
+ }));
+ // Four founder families preserve genetic variation while providing initially
+ // compatible mates. All individuals still have distinct mutated genomes.
+ const ancestors=founderColonies.map(()=>newGenome());
  for(let i=0;i<26;i++){
   const q=founderColonies[i%founderColonies.length];
   let x=q.x,y=q.y;
   for(let attempt=0;attempt<20;attempt++){
-   const nx=clamp(q.x+gauss()*38,65,WORLD_W-65),ny=clamp(q.y+gauss()*38,65,WORLD_H-65);
+   const nx=clamp(q.x+gauss()*17,65,WORLD_W-65),ny=clamp(q.y+gauss()*17,65,WORLD_H-65);
    if(!terrainAt(nx,ny).water){x=nx;y=ny;break;}
   }
-  spawn(newGenome(),x,y);
+  spawn(i<founderColonies.length?cloneG(ancestors[i]):mutate(ancestors[i%ancestors.length]),x,y);
  }
 }
 function resetWorld(){
  ticks=0;births=0;deaths=0;starvationDeaths=0;ageDeaths=0;hazardDeaths=0;migrations=0;foodEaten=0;
  acceptedTrials=0;rejectedTrials=0;nearCache=null;worldEpoch++;history.length=0;eventLog.length=0;
  selectedId=null;cid=1;camX=WORLD_W/2;camY=WORLD_H/2;
- bakeBiome();seedRocks();seedPopulation();seedFood();
+ bakeBiome();seedRocks();seedPopulation();seedFood();buildFoodGrid();
  addLog('Tick 0 · Four founder colonies settled in fertile terrain.');recordHistory();
 }
 function startLearningTrial(cre){
@@ -387,26 +474,35 @@ function startLearningTrial(cre){
 
 function centroid(cre){ let x=0,y=0; for(const p of cre.cur){x+=p.x;y+=p.y} return {x:x/cre.cur.length,y:y/cre.cur.length}; }
 function findNearestFood(cre,maxR){
-  if(turbo&&gpuOK&&nearCache&&nearCache.has(cre.id)){ const e=nearCache.get(cre.id); if(e.fo&&e.fo.e===1&&e.fd<=maxR) return {p:e.fo,d:e.fd}; return null; }
-  const c=centroid(cre); let best=null,bd=maxR;
-  for(const f of foods){ if(f.e!==1)continue; const d=Math.hypot(f.x-c.x,f.y-c.y); if(d<bd){bd=d;best=f;} }
-  return best?{p:best,d:bd}:null;
+ const c=cre.center||centroid(cre);let best=null,bd2=maxR*maxR;
+ // The grid is shared by all creatures. GPU status is informational, but the
+ // current-position grid avoids stale GPU readbacks distorting reinforcement.
+ for(const f of nearbyFood(c.x,c.y,maxR)){
+  const dx=f.x-c.x,dy=f.y-c.y,d2=dx*dx+dy*dy;
+  if(d2<bd2){bd2=d2;best=f;}
+ }
+ return best?{p:best,d:Math.sqrt(bd2)}:null;
 }
 function findNearestCreature(cre,maxR){
-  if(turbo&&gpuOK&&nearCache&&nearCache.has(cre.id)){ const e=nearCache.get(cre.id); if(e.co&&e.co.alive&&e.cd<=maxR) return {p:e.co,d:e.cd}; return null; }
-  const c=centroid(cre); let best=null,bd=maxR;
-  for(const o of creatures){ if(o===cre||!o.alive)continue; const oc=centroid(o); const d=Math.hypot(oc.x-c.x,oc.y-c.y); if(d<bd){bd=d;best=o;} }
+  const c=cre.center||centroid(cre); let best=null,bd=maxR;
+  for(const o of creatures){ if(o===cre||!o.alive)continue; const oc=o.center||centroid(o); const d=Math.hypot(oc.x-c.x,oc.y-c.y); if(d<bd){bd=d;best=o;} }
   return best?{p:best,d:bd}:null;
 }
 
+// Directional foot friction: evolved bristle-like contacts make reciprocal
+// contraction capable of crawling. No direction or gait is hardcoded.
+function effectiveGrip(node,mx,my,water){
+ const angle=node.bristleAngle??0,bias=node.bristle??0;
+ return clamp((node.grip??.5)*(1+bias*(mx*Math.cos(angle)+my*Math.sin(angle)))*(water?.12:1),.015,.985);
+}
 function stepCreature(cre){
  const bredFlag=cre.bredThisTick;cre.bredThisTick=false;cre.ateThisTick=false;
- const preE=cre.energy,c=centroid(cre),N=cre.cur.length,g=cre.genome;
+ const preE=cre.energy,c=cre.center||centroid(cre),N=cre.cur.length,g=cre.genome;
  const t=terrainAt(c.x,c.y),loc=localWeather(t),r=richness(c.x,c.y),h=loc.stress/1.6;
  const nf=findNearestFood(cre,SENSOR_RANGE),foodDistBefore=nf?nf.d:null;
  const ncR=findNearestCreature(cre,SENSOR_RANGE),nc=ncR?ncR.p:null,ncDist=ncR?ncR.d:9999;
  const tagSim=nc?1-clamp(Math.hypot(...g.tag.map((v,i)=>v-nc.genome.tag[i]))/2,0,1):0;
- const phase=cre.age*.14;
+ const phase=cre.age*(g.rhythm??.14);
  // Last five sensor channels expose moisture, temperature, water contact and a rhythmic clock.
  // The clock makes cyclic gaits learnable; it never dictates which direction to move.
  cre.sensors=[cre.energy/START_E,cre.age/g.maxAge,r,h,
@@ -417,9 +513,10 @@ function stepCreature(cre){
  let spd=0;
  for(let i=0;i<N;i++){
   const p=cre.cur[i],o=cre.old[i],ground=terrainAt(p.x,p.y);
-  const grip=g.nodes[i].grip??.5,traction=ground.water?.18:1;
-  let vx=p.x-o.x,vy=p.y-o.y;spd+=Math.hypot(vx,vy);
-  const damping=clamp(DRAG-.10*grip*traction-.11*(ground.water?1:0)-DRAGQ*Math.hypot(vx,vy),.2,.99);
+  let vx=p.x-o.x,vy=p.y-o.y;const mag=Math.hypot(vx,vy);
+  const grip=mag>.0001?effectiveGrip(g.nodes[i],vx/mag,vy/mag,ground.water):(g.nodes[i].grip??.5);
+  spd+=mag;
+  const damping=clamp(DRAG-.12*grip-.11*(ground.water?1:0)-DRAGQ*mag,.1,.99);
   vx*=damping;vy*=damping;cre.old[i]={x:p.x,y:p.y};p.x+=vx;p.y+=vy;
  }
  spd/=N;let cost=0;
@@ -431,8 +528,9 @@ function stepCreature(cre){
    let dx=B.x-A.x,dy=B.y-A.y,d=Math.hypot(dx,dy)||.001,diff=(d-target)/d*STIFF;
    // Ground reaction: grip differs per node and surface; internal muscle motion can
    // become actual locomotion instead of conserving the body's centre of mass forever.
-   const ga=(g.nodes[s.a].grip??.5)*(terrainAt(A.x,A.y).water?.12:1);
-   const gb=(g.nodes[s.b].grip??.5)*(terrainAt(B.x,B.y).water?.12:1);
+   const sign=Math.sign(diff)||1,ux=dx/d,uy=dy/d;
+   const ga=effectiveGrip(g.nodes[s.a],sign*ux,sign*uy,terrainAt(A.x,A.y).water);
+   const gb=effectiveGrip(g.nodes[s.b],-sign*ux,-sign*uy,terrainAt(B.x,B.y).water);
    const ma=Math.max(.04,1-ga),mb=Math.max(.04,1-gb),norm=ma+mb;
    A.x+=dx*diff*ma/norm;A.y+=dy*diff*ma/norm;
    B.x-=dx*diff*mb/norm;B.y-=dy*diff*mb/norm;
@@ -449,14 +547,23 @@ function stepCreature(cre){
    if(d<minD){d=Math.max(d,.001);p.x=clamp(rock.x+dx/d*minD,10,WORLD_W-10);p.y=clamp(rock.y+dy/d*minD,10,WORLD_H-10);}
   }
  }
- const after=centroid(cre),moved=Math.hypot(after.x-c.x,after.y-c.y);
- cre.moveDistance+=moved;cre.lastX=after.x;cre.lastY=after.y;
+ const after=centroid(cre),moved=Math.hypot(after.x-c.x,after.y-c.y);cre.center=after;
+cre.moveDistance+=moved;cre.lastX=after.x;cre.lastY=after.y;
+ const range=Math.hypot(after.x-cre.birthX,after.y-cre.birthY);
+ cre.maxRange=Math.max(cre.maxRange,range);
+ if(cre.age%25===0){
+  cre.trail.push({age:cre.age,x:after.x,y:after.y});
+  while(cre.trail.length>1&&cre.trail[0].age<cre.age-250)cre.trail.shift();
+  const base=cre.trail[0];cre.travel250=Math.hypot(after.x-base.x,after.y-base.y);
+ }
+ const cell=Math.floor(after.x/28)+','+Math.floor(after.y/28);
+ if(!cre.visitedCells.has(cell)){cre.visitedCells.add(cell);cre.newCellsWindow++;}
  const terrainCost=.17*inWater/N+.13*t.slope+.11*Math.max(0,t.elevation-.72);
  const metab=BASE_METAB*N*g.scale*(.58+.77*h+terrainCost);
  cre.energy-=metab+MUSCLE_COST*cost*g.scale;
  // One discrete feeding event per tick prevents unrealistic multiple instant meals.
  if(cre.energy<START_E){
-  for(const f of foods){if(f.e!==1)continue;
+  for(const f of nearbyFood(after.x,after.y,EAT_RADIUS)){
    if(Math.abs(f.x-after.x)>EAT_RADIUS||Math.abs(f.y-after.y)>EAT_RADIUS)continue;
    if(Math.hypot(f.x-after.x,f.y-after.y)<EAT_RADIUS){
     cre.energy=Math.min(START_E,cre.energy+FOOD_TYPES[f.type].energy);
@@ -468,19 +575,39 @@ function stepCreature(cre){
   nc?0:1,clamp(spd/3,0,1),cre.age/g.maxAge,tagSim,cre.energy/START_E,1];
  let rsum=0;for(let i=0;i<10;i++)rsum+=g.reward.w[i]*chans[i];
  let assist=0;
- if(nf&&foodDistBefore!==null){
+ if(nf&&nf.p.e===1&&foodDistBefore!==null){
   const foodDistAfter=Math.hypot(nf.p.x-after.x,nf.p.y-after.y);
-  assist=founderStrength()*.18*clamp(g.reward.w[0],-2,2)*clamp((foodDistBefore-foodDistAfter)/8,-1,1);
+  // This is credit for actual progress; it cannot manufacture food or energy.
+  assist=founderStrength()*2.1*clamp(g.reward.w[0],-2,2)*clamp(foodDistBefore-foodDistAfter,-1,1);
  }
- cre.rewardAcc+=tanh(rsum)+assist;cre.learnClock++;
+ // Add unclipped, gene-dependent credit when an intrinsically valued sparse
+ // event occurs (the tanh score alone almost erases the feeding signal).
+ const eventCredit=(cre.ateThisTick?3.5*g.reward.w[0]:0)+(bredFlag?3.5*g.reward.w[1]:0);
+ cre.rewardAcc+=tanh(rsum)+eventCredit+assist;
+ cre.learnClock++;
  const L=g.learn||{interval:45,sigma:.2,edits:2},every=Math.max(1,Math.round(L.interval));
  if(cre.learnClock%every===0){
+  const net=Math.hypot(after.x-cre.windowStart.x,after.y-cre.windowStart.y);
+  const moving=clamp(net/(every*.16),0,1);
+  // Net displacement across an entire learning window rewards locomotion but
+  // largely ignores stationary twitching and reciprocal body deformation.
+  // Novel visited cells encourage exploration instead of permanent local loops.
+  const fs=founderStrength();
+  const motionCredit=fs*(every*.25*moving+2.5*Math.min(3,cre.newCellsWindow));
+  const score=cre.rewardAcc+motionCredit;
   if(cre.trying){
-   const gain=cre.rewardAcc-cre.prevWindow;
-   if(gain>0){cre.keptW=cre.effW.slice();cre.prevWindow=cre.rewardAcc;cre.accepted++;acceptedTrials++;}
-   else {cre.effW=cre.keptW.slice();cre.rejected++;rejectedTrials++;}
-  }else cre.prevWindow=cre.rewardAcc;
-  cre.rewardAcc=0;startLearningTrial(cre);cre.trying=true;
+   if(score>cre.baselineScore+0.05){
+    cre.keptW=cre.effW.slice();cre.accepted++;acceptedTrials++;
+   }else{
+    cre.effW=cre.keptW.slice();cre.rejected++;rejectedTrials++;
+   }
+   cre.trying=false;
+  }else{
+   cre.baselineScore=score;
+   startLearningTrial(cre);
+   cre.trying=cre.effW.length>0;
+  }
+  cre.rewardAcc=0;cre.newCellsWindow=0;cre.windowStart={x:after.x,y:after.y};
  }
  cre.age++;if(cre.cooldown>0)cre.cooldown--;
  const hazard=LUCK_HAZARD+SENESCENCE_K*Math.pow(cre.age/g.maxAge,3);
@@ -491,12 +618,13 @@ function stepCreature(cre){
 function tryBreed(){
   if(creatures.length>=popCap()) return;
   const ready=creatures.filter(c=>c.alive && c.energy>REPRO_ENERGY_MIN && c.cooldown<=0);
+  const centers=new Map(ready.map(c=>[c,c.center||centroid(c)]));
   for(let i=0;i<ready.length;i++){
     const A=ready[i]; if(A.cooldown>0)continue;
-    const cA=centroid(A);
+    const cA=centers.get(A);
     for(let j=i+1;j<ready.length;j++){
       const B=ready[j]; if(B.cooldown>0)continue;
-      const cB=centroid(B); if(Math.hypot(cA.x-cB.x,cA.y-cB.y)>MATE_RANGE)continue;
+      const cB=centers.get(B); if(Math.hypot(cA.x-cB.x,cA.y-cB.y)>MATE_RANGE)continue;
       const tagDist=Math.hypot(...A.genome.tag.map((t,k)=>t-B.genome.tag[k]));
       if(tagDist>COMPAT_T)continue;
       const hd=Math.abs(A.genome.pref.hue-B.genome.hue); const hueDist=Math.min(hd,360-hd);
@@ -516,7 +644,7 @@ function tryBreed(){
   }
 }
 function tick(){
- stepFood();
+ stepFood();buildFoodGrid();
  for(const c of creatures)if(c.alive)stepCreature(c);
  tryBreed();
  creatures=creatures.filter(c=>c.alive);
@@ -529,9 +657,10 @@ function tick(){
  }
  ticks++;
  if(ticks%100===0)recordHistory();
- if(ticks===Math.round(founderEnd*.2))addLog(`Tick ${ticks} · Abundant founder phase ends; ecological assistance begins fading.`);
+ if(ticks===Math.round(founderEnd*FOUNDER_HOLD_FRACTION))addLog(`Tick ${ticks} · Ecological pressure begins rising very gradually.`);
  if(ticks===founderEnd)addLog(`Tick ${ticks} · Founder assistance ended. Natural ecology continues.`);
- if(turbo&&gpuOK&&ticks%6===0)gpuDispatch();
+ // The CPU spatial grid is faster at these sizes and never feeds stale results.
+ // Keep GPU feature detection available, without blocking maximum-speed stepping.
 }
 function recordHistory(){
  const avg=creatures.length?creatures.reduce((a,c)=>a+c.energy,0)/creatures.length:0;
@@ -546,9 +675,9 @@ const MAXC=160, MAXF=768;
 function withTimeout(p,ms){ return Promise.race([p, new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]); }
 async function initGPU(){
   try{
-    if(!navigator.gpu){ document.getElementById('gpustat').textContent='unavailable'; return; }
+    if(!navigator.gpu){ document.getElementById('gpustat').textContent='n/a · CPU grid'; return; }
     const adapter=await withTimeout(navigator.gpu.requestAdapter(),3000);
-    if(!adapter){ document.getElementById('gpustat').textContent='unavailable'; return; }
+    if(!adapter){ document.getElementById('gpustat').textContent='n/a · CPU grid'; return; }
     const device=await withTimeout(adapter.requestDevice(),3000);
     const shader=device.createShaderModule({code:`
       struct Params { nc:u32, nf:u32 };
@@ -584,11 +713,11 @@ async function initGPU(){
       {binding:2,resource:{buffer:factBuf}},{binding:3,resource:{buffer:outBuf}},{binding:4,resource:{buffer:paramBuf}}
     ]});
     gpuDevice=device; gpuPipeline=pipeline; gpuBufs={cposBuf,fposBuf,factBuf,outBuf,staging,paramBuf,bindGroup};
-    gpuOK=true; document.getElementById('gpustat').textContent='ready';
-  }catch(e){ gpuOK=false; document.getElementById('gpustat').textContent='unavailable'; }
+    gpuOK=true; document.getElementById('gpustat').textContent='available · CPU grid';
+  }catch(e){ gpuOK=false; document.getElementById('gpustat').textContent='n/a · CPU grid'; }
 }
 initGPU();
-setTimeout(()=>{ if(!gpuOK && document.getElementById('gpustat').textContent==='checking…') document.getElementById('gpustat').textContent='unavailable'; },4000);
+setTimeout(()=>{ if(!gpuOK && document.getElementById('gpustat').textContent==='checking…') document.getElementById('gpustat').textContent='n/a · CPU grid'; },4000);
 async function gpuDispatch(){
   if(!gpuOK||gpuBusy) return; gpuBusy=true;
   try{
@@ -611,12 +740,12 @@ async function gpuDispatch(){
       map.set(list[i].id,{fo,fd:res[i*4+1],co,cd:res[i*4+3]});
     }
     nearCache=map;
-  }catch(e){ gpuOK=false; document.getElementById('gpustat').textContent='error, using CPU'; }
+  }catch(e){ gpuOK=false; document.getElementById('gpustat').textContent='error · CPU grid'; }
   gpuBusy=false;
 }
 
 // ---- camera, atlas, inspectable world and telemetry ----
-let running=false,speed=1,lastUi=-1000,lastChart=-1000;
+let running=false,speed=1,turbo=false,lastUi=-1000,lastChart=-1000,lastDraw=-1000,lastRateTime=0,lastRateTick=0,timer=null;
 const el=id=>document.getElementById(id);
 const wrap=el('wrap'),histCanvas=el('historyCanvas'),chartCtx=histCanvas.getContext('2d');
 const key=el('biomeKey');
@@ -678,21 +807,25 @@ function showInspector(){
  Learning: every ${L.interval} ticks, σ=${fmt(L.sigma)}, ${L.edits} edits<br>
  Successful trials: ${c.accepted} / ${c.accepted+c.rejected}<br>
  Food eaten: ${c.foodEaten} · offspring: ${c.offspring}<br>
- Travelled: ${Math.round(c.moveDistance)} world units<br>
+ Distance travelled: ${Math.round(c.moveDistance)} units · displacement in last 250 ticks: ${fmt(c.travel250)}<br>
+ Explored ${c.visitedCells.size} cells · lifetime range: ${fmt(c.maxRange)} units<br>
  Food reward: ${fmt(c.genome.reward.w[0])} · mating reward: ${fmt(c.genome.reward.w[1])}`;
 }
 function updateUI(){
  const n=creatures.length,fs=founderStrength(),av=(fun)=>n?creatures.reduce((sum,c)=>sum+fun(c),0)/n:0;
  const food=foods.filter(f=>f.e===1).length, maxAge=n?Math.max(...creatures.map(c=>c.age)):0;
  el('ticks').textContent=ticks.toLocaleString();el('pop').textContent=n;
- el('foodCount').textContent=food+'/'+(FOOD_NORMAL+Math.round((FOOD_FOUNDER-FOOD_NORMAL)*fs));
+ el('foodCount').textContent=food+'/'+foodSiteCount();
  el('season').textContent=weather().season;
  el('founder').textContent=fs>0?Math.round(fs*100)+'%':'complete';
  el('founderSide').textContent=fs>0?Math.round(fs*100)+'% · '+Math.max(0,founderEnd-ticks).toLocaleString()+' ticks left':'complete';
  el('founderBar').style.width=fs*100+'%';
+ el('ecoPressure').textContent=Math.round((1-fs)*100)+'%';
+ el('motionAssist').textContent=Math.round(fs*100)+'%';
  el('mAlive').textContent=n;el('mEnergy').textContent=fmt(av(c=>c.energy));
  el('mBirthDeath').textContent=births+' / '+deaths;
  el('mAges').textContent=Math.round(av(c=>c.age))+' / '+maxAge;
+ el('mLifespan').textContent=Math.round(av(c=>c.genome.maxAge)).toLocaleString()+' ticks';
  el('mGen').textContent=n?Math.max(...creatures.map(c=>c.genome.generation||0)):0;
  el('mMigrations').textContent=migrations;el('mEaten').textContent=foodEaten;
  el('mDeaths').textContent=starvationDeaths+' / '+ageDeaths+' / '+hazardDeaths;
@@ -701,8 +834,11 @@ function updateUI(){
  el('mSigma').textContent=av(c=>c.genome.learn.sigma).toFixed(3);
  el('mBrain').textContent=fmt(av(c=>c.genome.brain.conn.length));
  el('mRewards').textContent=fmt(av(c=>c.genome.reward.w[0]))+' / '+fmt(av(c=>c.genome.reward.w[1]));
+ el('mTravel').textContent=fmt(av(c=>c.travel250))+' units';
+ el('mExplorers').textContent=creatures.filter(c=>c.travel250>15).length+' / '+n;
+ el('mRange').textContent=fmt(av(c=>c.maxRange))+' units';
  el('mClimate').textContent=weather().season+' / '+Math.round(weather().rain*100)+'%';
- el('mSupply').textContent=food+' / '+(FOOD_NORMAL+Math.round((FOOD_FOUNDER-FOOD_NORMAL)*fs));
+ el('mSupply').textContent=food+' / '+foodSiteCount();
  el('mSoil').textContent=Math.round(worldMeanSoil*100)+'%';
  el('mBiomes').textContent=biomeCounts.filter(n=>n>0).length+'/'+BIOMES.length;
  el('log').innerHTML=eventLog.map(s=>`<div>${s}</div>`).join('');
@@ -712,15 +848,33 @@ function updateUI(){
  el('placeName').innerHTML=`<b>${BIOMES[t.biome].name}</b> · soil ${Math.round(t.fertility*100)}% · slope ${Math.round(t.slope*100)}%`;
  showInspector();
 }
+// Turbo uses time-sliced maximum-speed batches, yielding only for input events
+// and drawing at most twice per second. It is mutually exclusive with 1×/4×/8×.
+function scheduleFrame(){
+ if(timer!==null)clearTimeout(timer);
+ if(turbo&&running)timer=setTimeout(frame,0);
+ else timer=requestAnimationFrame(frame);
+}
 function frame(){
+ timer=null;
  if(running){
-  if(turbo){const t0=performance.now();let n=0;while(performance.now()-t0<26&&n<1400){tick();n++;}}
-  else for(let i=0;i<speed;i++)tick();
+  if(turbo){
+   const deadline=performance.now()+45;
+   do{tick();}while(performance.now()<deadline);
+  }else for(let i=0;i<speed;i++)tick();
  }
- updateCam();drawWorld();
- const now=performance.now();if(now-lastUi>170){updateUI();lastUi=now;}
- if(now-lastChart>550){drawHistory();lastChart=now;}
- requestAnimationFrame(frame);
+ const now=performance.now();
+ if(now-lastRateTime>600){
+  const rate=Math.max(0,Math.round((ticks-lastRateTick)*1000/Math.max(1,now-lastRateTime)));
+  el('tickRate').textContent=rate.toLocaleString()+' ticks/s';
+  lastRateTime=now;lastRateTick=ticks;
+ }
+ if(!turbo||!running||now-lastDraw>=500){
+  updateCam();drawWorld();lastDraw=now;
+ }
+ if(now-lastUi>(turbo&&running?600:170)){updateUI();lastUi=now;}
+ if(now-lastChart>(turbo&&running?1100:550)){drawHistory();lastChart=now;}
+ scheduleFrame();
 }
 let drag=null;
 cv.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,cx:camX,cy:camY,moved:false};cv.setPointerCapture(e.pointerId);});
@@ -746,8 +900,17 @@ el('founderLength').oninput=e=>{founderEnd=Number(e.target.value);el('founderEnd
 el('immigrationBtn').onclick=e=>{immigration=!immigration;e.target.classList.toggle('on',immigration);e.target.textContent='Immigration: '+(immigration?'on':'off');};
 el('playBtn').onclick=e=>{running=!running;e.target.textContent=running?'⏸ Pause':'▶ Run';};
 el('resetBtn').onclick=()=>{resetWorld();updateUI();};
-el('turboBtn').onclick=e=>{turbo=!turbo;e.target.classList.toggle('on',turbo);};
-[['s1',1],['s4',4],['s8',8]].forEach(([id,v])=>{el(id).onclick=()=>{speed=v;['s1','s4','s8'].forEach(x=>el(x).classList.remove('on'));el(id).classList.add('on');};});
+function setSpeed(next){
+ turbo=next==='turbo';
+ if(!turbo)speed=next;
+ for(const id of ['s1','s4','s8','turboBtn'])el(id).classList.remove('on');
+ el(turbo?'turboBtn':'s'+speed).classList.add('on');
+ lastDraw=-1000;lastUi=-1000;
+ if(timer!==null){clearTimeout(timer);cancelAnimationFrame(timer);}
+ timer=null;scheduleFrame();
+}
+el('turboBtn').onclick=()=>setSpeed('turbo');
+[['s1',1],['s4',4],['s8',8]].forEach(([id,v])=>{el(id).onclick=()=>setSpeed(v);});
 addEventListener('resize',()=>{fitCanvas();drawHistory();});
 fitCanvas();updateUI();frame();
 </script>
