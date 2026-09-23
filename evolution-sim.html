@@ -38,13 +38,14 @@ footer b{color:var(--warn)}
   <button id="s1" class="on">1×</button><button id="s4">4×</button><button id="s8">8×</button>
   <button id="turboBtn">⚡ Turbo</button>
   <span class="stat">GPU <b id="gpustat">checking…</b></span>
+  <span class="stat">Founder phase <b id="founder">100%</b></span>
   <span class="stat">Ticks <b id="ticks">0</b></span>
   <span class="stat">Pop <b id="pop">0</b></span>
   <span class="stat">Births <b id="births">0</b></span>
   <span class="stat">Avg age <b id="avgage">0</b></span>
 </div>
 <div id="wrap"><canvas id="c"></canvas></div>
-<footer><b>Reward gene:</b> a mutable weight per sensation (fed, bred, energy rising, crowded, alone, moving, aging...) starts pointed at food+mating and can drift anywhere. <b>Lifetime learning:</b> every ~45 ticks a creature nudges its own motor wiring and keeps it only if its own reward score rose — not inherited, only the capacity to do it is. <b>Turbo:</b> decouples simulation from frame rate and raises the population cap; WebGPU offloads the nearest-food/nearest-neighbor search to a compute shader when your browser supports it, falling back to plain JS otherwise.</footer>
+<footer><b>Founder phase:</b> for the first 500 ticks food is denser, regrows faster, and founders begin in loose colonies in rich patches; assistance then fades smoothly to zero by tick 1500. It changes the ecology, not survival rules. <b>Reward gene:</b> sensation weights still evolve freely. <b>Lifetime learning:</b> creatures test small local motor-wiring changes; learning interval, step size and number of edited connections are heritable, but learned weights are not. Early credit for moving toward food follows each creature’s own food-reward gene and disappears with the founder phase. <b>Turbo:</b> WebGPU accelerates neighbor search when available, with JS fallback.</footer>
 <script>
 const cv=document.getElementById('c'),ctx=cv.getContext('2d');
 function fitCanvas(){const w=document.getElementById('wrap');cv.width=w.clientWidth*devicePixelRatio;cv.height=w.clientHeight*devicePixelRatio;cv.style.width=w.clientWidth+'px';cv.style.height=w.clientHeight+'px';ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);}
@@ -60,8 +61,16 @@ const CONNECT_R=34, STIFF=0.26, ITERS=3, DRAG=0.985, DRAGQ=0.006, MAXPULL=0.4;
 const BASE_METAB=0.006, MUSCLE_COST=0.012, EAT_RADIUS=16, SENSOR_RANGE=200;
 const REPRO_ENERGY_MIN=65, REPRO_BASE=18, REPRO_PER_NODE=2.6, CHILD_START_E=48, MATE_RANGE=34, MATE_COOLDOWN=260, MATE_SCORE_T=0.62, COMPAT_T=0.85;
 const SENESCENCE_K=0.0000035, LUCK_HAZARD=0.00003, POP_CAP=60, TURBO_POP_CAP=140, START_E=100;
-const MAXH=12, MAXCONN=50, LEARN_EVERY=45;
+const MAXH=12, MAXCONN=50;
+const FOOD_NORMAL=220, FOOD_FOUNDER=440, FOUNDER_HOLD=500, FOUNDER_END=1500;
 function popCap(){return turbo?TURBO_POP_CAP:POP_CAP;}
+function founderStrength(){
+  if(ticks<=FOUNDER_HOLD)return 1;
+  if(ticks>=FOUNDER_END)return 0;
+  const u=(ticks-FOUNDER_HOLD)/(FOUNDER_END-FOUNDER_HOLD);
+  const smooth=u*u*(3-2*u);
+  return 1-smooth;
+}
 
 // ---- biome field ----
 let seed={a:rnd(0,10),b:rnd(0,10),c:rnd(0,10),d:rnd(0,10)};
@@ -82,8 +91,27 @@ function bakeBiome(){
 
 // ---- food ----
 let foods=[];
-function seedFood(){ foods=[]; for(let i=0;i<220;i++){const x=rnd(0,WORLD_W),y=rnd(0,WORLD_H); foods.push({x,y,e:richness(x,y)>0.35?1:0,t:0});} }
-function stepFood(){ for(const f of foods){ if(f.e===0){ f.t++; const need=140+(1-richness(f.x,f.y))*400; if(f.t>need)f.e=1; } } }
+function seedFood(){
+  foods=[];
+  for(let i=0;i<FOOD_FOUNDER;i++){
+    const x=rnd(0,WORLD_W),y=rnd(0,WORLD_H);
+    foods.push({x,y,e:richness(x,y)>0.35?1:0,t:0});
+  }
+}
+function stepFood(){
+  const assist=founderStrength();
+  const activeCount=Math.round(FOOD_NORMAL+(FOOD_FOUNDER-FOOD_NORMAL)*assist);
+  const regrowBoost=1+assist;
+  for(let i=0;i<foods.length;i++){
+    const f=foods[i];
+    if(i>=activeCount){ f.e=0; f.t=0; continue; }
+    if(f.e===0){
+      f.t++;
+      const need=(140+(1-richness(f.x,f.y))*400)/regrowBoost;
+      if(f.t>need)f.e=1;
+    }
+  }
+}
 
 // ---- genome ----
 let sidCounter=1;
@@ -115,6 +143,7 @@ function newGenome(){
     pref:{size:rnd(0.7,1.4),hue:rnd(0,360),tagW:rnd(0,1)},
     maxAge:rnd(1800,4200),
     reward:{w:rw},
+    learn:{interval:Math.round(rnd(38,53)), sigma:rnd(0.14,0.24), edits:Math.floor(rnd(1,4))},
     brain:{hidden:[], nextH:0, conn:emptyConn(springs)}
   };
 }
@@ -154,6 +183,12 @@ function mutateReward(g){
   g.reward.w=g.reward.w.map(v=>clamp(v+(Math.random()<0.12?gauss()*0.35:0),-2,2));
   if(Math.random()<0.05){ const i=Math.floor(rnd(0,10)); g.reward.w[i]=rnd(-1.5,1.5); }
 }
+function mutateLearning(g){
+  if(!g.learn) g.learn={interval:45,sigma:0.2,edits:2};
+  if(Math.random()<0.18) g.learn.interval=Math.round(clamp(g.learn.interval+gauss()*5,20,100));
+  if(Math.random()<0.18) g.learn.sigma=clamp(g.learn.sigma+gauss()*0.035,0.03,0.6);
+  if(Math.random()<0.12) g.learn.edits=Math.round(clamp(g.learn.edits+(Math.random()<0.5?-1:1),1,6));
+}
 function mutateBrain(g){
   const b=g.brain;
   if(Math.random()<0.15 && b.hidden.length<MAXH){ const id=b.nextH++; b.hidden.push(id); b.conn.push({from:'s'+Math.floor(rnd(0,10)),to:'h'+id,w:rnd(-1,1)}); const targets=g.springs.filter(s=>s.muscle); if(targets.length) b.conn.push({from:'h'+id,to:'m'+targets[Math.floor(rnd(0,targets.length))].id,w:rnd(-1,1)}); }
@@ -167,7 +202,7 @@ function mutateBrain(g){
   b.conn=b.conn.map(c=>({...c, w:c.w+(Math.random()<0.2?gauss()*0.3:0)}));
   pruneConn(g);
 }
-function mutate(g){ const m=cloneG(g); mutateBody(m); mutateBrain(m); mutateReward(m); return m; }
+function mutate(g){ const m=cloneG(g); mutateBody(m); mutateBrain(m); mutateReward(m); mutateLearning(m); return m; }
 function cross(a,b){
   const c=cloneG(Math.random()<0.5?a:b);
   c.scale=Math.random()<0.5?a.scale:b.scale; c.hue=Math.random()<0.5?a.hue:b.hue;
@@ -175,6 +210,8 @@ function cross(a,b){
   c.pref={size:Math.random()<0.5?a.pref.size:b.pref.size, hue:Math.random()<0.5?a.pref.hue:b.pref.hue, tagW:Math.random()<0.5?a.pref.tagW:b.pref.tagW};
   c.maxAge=Math.random()<0.5?a.maxAge:b.maxAge;
   c.reward={w:a.reward.w.map((v,i)=>Math.random()<0.5?v:b.reward.w[i])};
+  const la=a.learn||{interval:45,sigma:0.2,edits:2}, lb=b.learn||{interval:45,sigma:0.2,edits:2};
+  c.learn={interval:Math.random()<0.5?la.interval:lb.interval, sigma:Math.random()<0.5?la.sigma:lb.sigma, edits:Math.random()<0.5?la.edits:lb.edits};
   pruneConn(c);
   return c;
 }
@@ -190,15 +227,40 @@ function forwardBrain(cre){
   return motorOut;
 }
 
-let creatures=[], ticks=0, births=0, deaths=0, cid=1, turbo=false;
+let creatures=[], ticks=0, births=0, deaths=0, cid=1, turbo=false, nearCache=null;
 function spawn(genome,x,y){
   const cur=genome.nodes.map(n=>({x:x+n.x*genome.scale,y:y+n.y*genome.scale}));
   const effW=genome.brain.conn.map(c=>c.w);
   creatures.push({id:cid++, genome, cur, old:cur.map(p=>({...p})), energy:START_E, age:0, cooldown:0, neur:{}, alive:true,
     effW, keptW:effW.slice(), rewardAcc:0, prevWindow:0, learnClock:0, trying:false, ateThisTick:false, bredThisTick:false});
 }
-function seedPopulation(){ creatures=[]; for(let i=0;i<26;i++) spawn(newGenome(), rnd(200,WORLD_W-200), rnd(200,WORLD_H-200)); }
+function richFounderCenter(){
+  let best={x:rnd(200,WORLD_W-200),y:rnd(200,WORLD_H-200)}, br=richness(best.x,best.y);
+  for(let i=0;i<20;i++){
+    const p={x:rnd(200,WORLD_W-200),y:rnd(200,WORLD_H-200)}, r=richness(p.x,p.y);
+    if(r>br){best=p;br=r;}
+    if(r>0.72) return p;
+  }
+  return best;
+}
+function seedPopulation(){
+  creatures=[];
+  const colonies=Array.from({length:4},()=>richFounderCenter());
+  for(let i=0;i<26;i++){
+    const q=colonies[i%colonies.length];
+    spawn(newGenome(), clamp(q.x+gauss()*45,80,WORLD_W-80), clamp(q.y+gauss()*45,80,WORLD_H-80));
+  }
+}
 function resetWorld(){ ticks=0; births=0; deaths=0; nearCache=null; bakeBiome(); seedFood(); seedPopulation(); }
+function startLearningTrial(cre){
+  const L=cre.genome.learn||{interval:45,sigma:0.2,edits:2};
+  cre.effW=cre.keptW.slice();
+  if(!cre.effW.length)return;
+  const count=Math.min(cre.effW.length,Math.max(1,Math.round(L.edits)));
+  const chosen=new Set();
+  while(chosen.size<count) chosen.add(Math.floor(rnd(0,cre.effW.length)));
+  for(const i of chosen) cre.effW[i]+=gauss()*L.sigma;
+}
 
 function centroid(cre){ let x=0,y=0; for(const p of cre.cur){x+=p.x;y+=p.y} return {x:x/cre.cur.length,y:y/cre.cur.length}; }
 function findNearestFood(cre,maxR){
@@ -220,6 +282,7 @@ function stepCreature(cre){
   const c=centroid(cre), N=cre.cur.length, g=cre.genome;
   const r=richness(c.x,c.y), h=harshness(c.x,c.y);
   const nf=findNearestFood(cre,SENSOR_RANGE);
+  const foodDistBefore=nf?nf.d:null;
   const ncR=findNearestCreature(cre,SENSOR_RANGE);
   const nc=ncR?ncR.p:null, ncDist=ncR?ncR.d:9999;
   const tagSim = nc ? 1-clamp(Math.hypot(...g.tag.map((t,i)=>t-nc.genome.tag[i]))/2,0,1) : 0;
@@ -248,13 +311,30 @@ function stepCreature(cre){
   // evolved reward: fixed sensation vocabulary, mutable weights
   const chans=[cre.ateThisTick?1:0, bredFlag?1:0, clamp((cre.energy-preE)/5,-1,1), ncDist<40?1:0, nc?0:1, clamp(spd/3,0,1), cre.age/g.maxAge, tagSim, cre.energy/START_E, 1];
   let rsum=0; for(let i=0;i<10;i++) rsum+=g.reward.w[i]*chans[i];
-  cre.rewardAcc+=tanh(rsum);
+
+  // Founder-phase credit shaping affects learning only, never energy, survival or reproduction.
+  // It follows the creature's own evolved food reward: a creature that dislikes food is not
+  // secretly forced to learn to approach it. The signal smoothly vanishes after the founder phase.
+  let learningAssist=0;
+  if(nf && foodDistBefore!==null){
+    const now=centroid(cre), foodDistAfter=Math.hypot(nf.p.x-now.x,nf.p.y-now.y);
+    const progress=clamp((foodDistBefore-foodDistAfter)/8,-1,1);
+    learningAssist=founderStrength()*0.18*clamp(g.reward.w[0],-2,2)*progress;
+  }
+  cre.rewardAcc+=tanh(rsum)+learningAssist;
   cre.learnClock++;
-  if(cre.learnClock%LEARN_EVERY===0){
-    const gain=cre.rewardAcc-cre.prevWindow;
-    if(cre.trying){ if(gain>0) cre.keptW=cre.effW.slice(); else cre.effW=cre.keptW.slice(); }
-    cre.prevWindow=cre.rewardAcc; cre.rewardAcc=0;
-    cre.effW=cre.keptW.map(w=>w+(Math.random()<0.35?gauss()*0.3:0));
+  const learnCfg=g.learn||{interval:45,sigma:0.2,edits:2};
+  const learnEvery=Math.max(1,Math.round(learnCfg.interval));
+  if(cre.learnClock%learnEvery===0){
+    if(cre.trying){
+      const gain=cre.rewardAcc-cre.prevWindow;
+      if(gain>0){ cre.keptW=cre.effW.slice(); cre.prevWindow=cre.rewardAcc; }
+      else { cre.effW=cre.keptW.slice(); }
+    } else {
+      cre.prevWindow=cre.rewardAcc;
+    }
+    cre.rewardAcc=0;
+    startLearningTrial(cre);
     cre.trying=true;
   }
   cre.age++; if(cre.cooldown>0)cre.cooldown--;
@@ -299,7 +379,7 @@ function tick(){
 resetWorld();
 
 // ---- optional WebGPU neighbor-search accelerator (feature-detected, safe fallback) ----
-let gpuOK=false, gpuDevice=null, gpuPipeline=null, gpuBufs=null, gpuBusy=false, nearCache=null;
+let gpuOK=false, gpuDevice=null, gpuPipeline=null, gpuBufs=null, gpuBusy=false;
 const MAXC=160, MAXF=500;
 function withTimeout(p,ms){ return Promise.race([p, new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]); }
 async function initGPU(){
@@ -389,6 +469,8 @@ function draw(){
     for(const p of c.cur){ ctx.beginPath(); ctx.arc(p.x*s,p.y*s,2.6*c.genome.scale,0,7); ctx.fill(); }
   }
   ctx.restore();
+  const fs=founderStrength();
+  document.getElementById('founder').textContent=fs>0?Math.round(fs*100)+'%':'complete';
   document.getElementById('ticks').textContent=ticks;
   document.getElementById('pop').textContent=creatures.length;
   document.getElementById('births').textContent=births;
